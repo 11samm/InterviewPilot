@@ -2,6 +2,14 @@
 
 import { useState, useEffect, useRef } from "react"
 import {
+  planInterview,
+  analyzeInterview,
+  type AnalyzeOutput,
+  type FaceMetric,
+  type PlanOutput,
+  type SetupInput,
+} from "@/app/lib/api"
+import {
   Briefcase,
   MessageSquare,
   Building2,
@@ -95,7 +103,13 @@ function CustomSelect({
 }
 
 // Setup Screen
-function SetupScreen({ onStart }: { onStart: () => void }) {
+function SetupScreen({
+  onStart,
+  isStarting,
+}: {
+  onStart: (setup: SetupInput) => void | Promise<void>
+  isStarting: boolean
+}) {
   const [role, setRole] = useState("software-engineer")
   const [style, setStyle] = useState("behavioral")
   const [vibe, setVibe] = useState("startup")
@@ -131,9 +145,7 @@ function SetupScreen({ onStart }: { onStart: () => void }) {
   ]
 
   const handleStart = () => {
-    console.log("[v0] Starting interview with config:", { role, style, vibe, difficulty })
-    console.log("[v0] TODO: API call to generate interview questions")
-    onStart()
+    void onStart({ role, style, vibe, difficulty })
   }
 
   return (
@@ -186,10 +198,12 @@ function SetupScreen({ onStart }: { onStart: () => void }) {
 
         {/* Start Button */}
         <button
+          type="button"
           onClick={handleStart}
-          className="w-full py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/50"
+          disabled={isStarting}
+          className="w-full py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60 disabled:pointer-events-none disabled:hover:scale-100"
         >
-          Start Interview
+          {isStarting ? "Starting…" : "Start Interview"}
         </button>
       </div>
     </div>
@@ -197,11 +211,27 @@ function SetupScreen({ onStart }: { onStart: () => void }) {
 }
 
 // Interview Screen (Live HUD)
-function InterviewScreen({ onEnd }: { onEnd: () => void }) {
+function InterviewScreen({
+  plan,
+  onEnd,
+}: {
+  plan: PlanOutput
+  onEnd: (payload: {
+    transcript: string
+    duration_seconds: number
+    face_metrics: FaceMetric[]
+  }) => void | Promise<void>
+}) {
   const [timeLeft, setTimeLeft] = useState(30)
   const [fillerWords, setFillerWords] = useState(3)
   const [eyeContact, setEyeContact] = useState(85)
   const [speechPace, setSpeechPace] = useState(140)
+  const [isEnding, setIsEnding] = useState(false)
+  const sessionStartRef = useRef<number>(Date.now())
+
+  useEffect(() => {
+    sessionStartRef.current = Date.now()
+  }, [plan])
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -233,10 +263,39 @@ function InterviewScreen({ onEnd }: { onEnd: () => void }) {
     return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
   }
 
-  const handleEnd = () => {
-    console.log("[v0] Ending interview")
-    console.log("[v0] TODO: API call to stop recording and submit for analysis")
-    onEnd()
+  const handleEnd = async () => {
+    if (isEnding) return
+    setIsEnding(true)
+    const duration_seconds = (Date.now() - sessionStartRef.current) / 1000
+    const ec = Math.min(100, Math.max(0, eyeContact)) / 100
+    const face_metrics: FaceMetric[] = [
+      { timestamp: 0, eye_contact: ec, head_pitch: 0, head_yaw: 0 },
+      {
+        timestamp: Math.max(0, duration_seconds * 0.45),
+        eye_contact: Math.min(1, ec + 0.04),
+        head_pitch: 0.02,
+        head_yaw: -0.03,
+      },
+      {
+        timestamp: duration_seconds,
+        eye_contact: ec,
+        head_pitch: -0.01,
+        head_yaw: 0.02,
+      },
+    ]
+    const transcript = [
+      `Question 1: ${plan.questions[0]}`,
+      plan.questions[1] ? `Question 2: ${plan.questions[1]}` : "",
+      "[Simulated transcript] The candidate walked through a concrete example, described their actions, and summarized outcomes.",
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+
+    try {
+      await onEnd({ transcript, duration_seconds, face_metrics })
+    } finally {
+      setIsEnding(false)
+    }
   }
 
   return (
@@ -275,9 +334,13 @@ function InterviewScreen({ onEnd }: { onEnd: () => void }) {
             <div className="absolute bottom-6 left-6 right-6">
               <div className="backdrop-blur-xl bg-card/60 border border-border/50 rounded-xl p-6 shadow-xl">
                 <p className="text-lg text-foreground leading-relaxed text-balance">
-                  {'"'}Tell me about a time when you had to work with a difficult team member. How
-                  did you handle the situation and what was the outcome?{'"'}
+                  &ldquo;{plan.questions[0]}&rdquo;
                 </p>
+                {plan.questions[1] ? (
+                  <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
+                    Next: &ldquo;{plan.questions[1]}&rdquo;
+                  </p>
+                ) : null}
               </div>
             </div>
           </div>
@@ -340,11 +403,13 @@ function InterviewScreen({ onEnd }: { onEnd: () => void }) {
       {/* Floating Control Bar */}
       <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
         <button
-          onClick={handleEnd}
-          className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all duration-300 flex items-center gap-2"
+          type="button"
+          onClick={() => void handleEnd()}
+          disabled={isEnding}
+          className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all duration-300 flex items-center gap-2 disabled:opacity-60 disabled:pointer-events-none"
         >
           <span className="h-2 w-2 bg-white rounded-full" />
-          End Interview
+          {isEnding ? "Submitting…" : "End Interview"}
         </button>
       </div>
     </div>
@@ -352,16 +417,9 @@ function InterviewScreen({ onEnd }: { onEnd: () => void }) {
 }
 
 // Processing Screen
-function ProcessingScreen({ onComplete }: { onComplete: () => void }) {
-  const handleSimulateComplete = () => {
-    console.log("[v0] Analysis complete, showing results")
-    console.log("[v0] TODO: This would normally wait for API response")
-    onComplete()
-  }
-
+function ProcessingScreen() {
   return (
     <div className="min-h-screen flex flex-col items-center justify-center p-6 gap-8">
-      {/* Spinner */}
       <div className="relative">
         <div className="w-24 h-24 border-4 border-secondary rounded-full"></div>
         <div className="absolute top-0 left-0 w-24 h-24 border-4 border-primary border-t-transparent rounded-full animate-spin"></div>
@@ -370,42 +428,28 @@ function ProcessingScreen({ onComplete }: { onComplete: () => void }) {
         </div>
       </div>
 
-      {/* Text */}
       <div className="text-center space-y-2">
-        <h2 className="text-2xl font-bold text-foreground">ASI:One Agents Analyzing...</h2>
-        <p className="text-muted-foreground">Processing your interview performance</p>
+        <h2 className="text-2xl font-bold text-foreground">Analyzing your interview…</h2>
+        <p className="text-muted-foreground">Sending responses to the coach service</p>
       </div>
-
-      {/* Dev Button */}
-      <button
-        onClick={handleSimulateComplete}
-        className="mt-8 px-6 py-2 bg-secondary border border-border text-muted-foreground rounded-lg hover:text-foreground hover:border-primary/50 transition-colors text-sm"
-      >
-        Simulate Complete (Dev)
-      </button>
     </div>
   )
 }
 
 // Results Screen
-function ResultsScreen({ onRetry }: { onRetry: () => void }) {
-  const score = 78
-
-  const strengths = [
-    "Strong use of the STAR method to structure your response",
-    "Excellent eye contact maintained throughout (85%)",
-    "Clear and confident speaking pace",
-  ]
-
-  const improvements = [
-    "Reduce filler words - try pausing instead of saying 'um'",
-    "Provide more specific metrics and outcomes",
-    "Consider adding a brief reflection on learnings",
-  ]
+function ResultsScreen({
+  results,
+  onRetry,
+}: {
+  results: AnalyzeOutput
+  onRetry: () => void
+}) {
+  const { coaching } = results
+  const score = coaching.confidence_score
+  const strengths = coaching.strengths
+  const improvements = coaching.improvements
 
   const handleRetry = () => {
-    console.log("[v0] Retrying interview question")
-    console.log("[v0] TODO: API call to reset session or get same/new question")
     onRetry()
   }
 
@@ -422,6 +466,11 @@ function ResultsScreen({ onRetry }: { onRetry: () => void }) {
           </span>
           <span className="text-3xl text-muted-foreground">/100</span>
         </div>
+        {coaching.summary ? (
+          <p className="mt-6 max-w-xl mx-auto text-muted-foreground leading-relaxed text-balance">
+            {coaching.summary}
+          </p>
+        ) : null}
       </div>
 
       {/* Feedback Grid */}
@@ -448,11 +497,21 @@ function ResultsScreen({ onRetry }: { onRetry: () => void }) {
             <AlertTriangle className="h-5 w-5" />
             Areas to Improve
           </h3>
-          <ul className="space-y-3">
+          <ul className="space-y-4">
             {improvements.map((item, i) => (
-              <li key={i} className="flex items-start gap-3 text-muted-foreground">
-                <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
-                <span>{item}</span>
+              <li key={i} className="flex flex-col gap-2 text-muted-foreground">
+                <div className="flex items-start gap-3">
+                  <AlertTriangle className="h-5 w-5 text-destructive shrink-0 mt-0.5" />
+                  <span>{item}</span>
+                </div>
+                <button
+                  type="button"
+                  className="self-start ml-8 text-xs font-medium text-primary hover:underline"
+                  disabled
+                  title="Deep Dive wiring comes in a later sprint"
+                >
+                  Deep Dive (soon)
+                </button>
               </li>
             ))}
           </ul>
@@ -461,6 +520,7 @@ function ResultsScreen({ onRetry }: { onRetry: () => void }) {
 
       {/* Retry Button */}
       <button
+        type="button"
         onClick={handleRetry}
         className="px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 flex items-center gap-2"
       >
@@ -474,17 +534,87 @@ function ResultsScreen({ onRetry }: { onRetry: () => void }) {
 // Main App Component
 export default function InterviewPilot() {
   const [activeView, setActiveView] = useState<ActiveView>("setup")
+  const [plan, setPlan] = useState<PlanOutput | null>(null)
+  const [results, setResults] = useState<AnalyzeOutput | null>(null)
+  const [isStarting, setIsStarting] = useState(false)
+  const [toastError, setToastError] = useState<string | null>(null)
+
+  const handleSetupStart = async (setup: SetupInput) => {
+    setToastError(null)
+    setIsStarting(true)
+    try {
+      const nextPlan = await planInterview(setup)
+      setPlan(nextPlan)
+      setResults(null)
+      setActiveView("interview")
+    } catch (e) {
+      setToastError(e instanceof Error ? e.message : "Could not start interview")
+    } finally {
+      setIsStarting(false)
+    }
+  }
+
+  const handleInterviewEnd = async (payload: {
+    transcript: string
+    duration_seconds: number
+    face_metrics: FaceMetric[]
+  }) => {
+    if (!plan) {
+      setToastError("No interview plan loaded.")
+      return
+    }
+    setToastError(null)
+    setActiveView("processing")
+    try {
+      const out = await analyzeInterview({
+        questions: plan.questions,
+        rubric: plan.rubric,
+        transcript: payload.transcript,
+        duration_seconds: payload.duration_seconds,
+        face_metrics: payload.face_metrics,
+      })
+      setResults(out)
+      setActiveView("results")
+    } catch (e) {
+      setToastError(e instanceof Error ? e.message : "Analysis failed")
+      setActiveView("interview")
+    }
+  }
 
   return (
-    <main className="min-h-screen bg-background">
-      {activeView === "setup" && <SetupScreen onStart={() => setActiveView("interview")} />}
-      {activeView === "interview" && (
-        <InterviewScreen onEnd={() => setActiveView("processing")} />
+    <main className="min-h-screen bg-background relative">
+      {toastError ? (
+        <div
+          className="fixed top-4 left-1/2 z-[100] flex max-w-lg -translate-x-1/2 items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/15 px-4 py-3 text-sm text-foreground shadow-lg backdrop-blur-sm"
+          role="alert"
+        >
+          <span className="flex-1">{toastError}</span>
+          <button
+            type="button"
+            onClick={() => setToastError(null)}
+            className="shrink-0 text-primary hover:underline"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+
+      {activeView === "setup" && (
+        <SetupScreen onStart={handleSetupStart} isStarting={isStarting} />
       )}
-      {activeView === "processing" && (
-        <ProcessingScreen onComplete={() => setActiveView("results")} />
+      {activeView === "interview" && plan && (
+        <InterviewScreen plan={plan} onEnd={handleInterviewEnd} />
       )}
-      {activeView === "results" && <ResultsScreen onRetry={() => setActiveView("interview")} />}
+      {activeView === "processing" && <ProcessingScreen />}
+      {activeView === "results" && results && (
+        <ResultsScreen
+          results={results}
+          onRetry={() => {
+            setResults(null)
+            setActiveView("interview")
+          }}
+        />
+      )}
     </main>
   )
 }
