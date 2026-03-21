@@ -1,5 +1,6 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
+from backend.gemini import GeminiInvocationError
 from backend.schemas import AnalyzeInput, AnalyzeOutput
 from backend.services.coach import CoachService
 from backend.services.presence import PresenceService
@@ -16,5 +17,13 @@ _coach = CoachService()
 async def analyze_interview(body: AnalyzeInput) -> AnalyzeOutput:
     presence = _presence.score(body.face_metrics)
     speech = _speech.score(body.transcript, body.duration_seconds)
-    coaching = await _coach.coach(body)
+    try:
+        coaching = await _coach.coach(body, presence=presence, speech=speech)
+    except GeminiInvocationError as e:
+        raise HTTPException(status_code=500, detail=e.message) from e
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Interview analysis failed: {type(e).__name__}: {e}",
+        ) from e
     return AnalyzeOutput(presence=presence, speech=speech, coaching=coaching)

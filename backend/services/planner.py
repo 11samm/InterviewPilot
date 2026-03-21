@@ -1,16 +1,26 @@
+from backend.gemini import generate_structured
 from backend.schemas import PlanOutput, SetupInput
+
+_PLANNER_SYSTEM = (
+    "You are an expert technical and behavioral interviewer. "
+    "You always return strictly valid JSON matching the provided schema."
+)
 
 
 class PlannerService:
-    _MOCK_QUESTIONS: tuple[str, str] = (
-        "Tell me about a time you failed and what you learned from it.",
-        "Describe a situation where you had to influence someone who disagreed with you.",
-    )
-    _MOCK_RUBRIC: str = (
-        "Score clarity, STAR structure, ownership, and reflection. "
-        "Penalize vague claims; reward specific outcomes and lessons learned."
-    )
-
     async def generate(self, payload: SetupInput) -> PlanOutput:
-        _ = payload
-        return PlanOutput(questions=list(self._MOCK_QUESTIONS), rubric=self._MOCK_RUBRIC)
+        user_prompt = f"""Create a mock interview plan.
+
+Target role (use this verbatim as the candidate's role context): {payload.role}
+Company vibe: {payload.vibe}
+Interview style: {payload.style}
+Difficulty level: {payload.difficulty}
+
+Generate exactly two distinct, specific interview questions tailored to this role and vibe.
+Include a concise scoring rubric (what excellent, average, and weak answers look like).
+"""
+        return await generate_structured(
+            system_instruction=_PLANNER_SYSTEM,
+            user_prompt=user_prompt,
+            output_model=PlanOutput,
+        )

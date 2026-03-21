@@ -45,9 +45,9 @@ class SpeechScore(BaseModel):
 
 
 class CoachOutput(BaseModel):
-    strengths: list[str]
-    improvements: list[str]
-    confidence_score: int
+    strengths: Annotated[list[str], Field(min_length=3, max_length=3)]
+    improvements: Annotated[list[str], Field(min_length=3, max_length=3)]
+    confidence_score: Annotated[int, Field(ge=0, le=100)]
     summary: str
 
 

@@ -17,3 +17,8 @@ backend/.venv/
 node_modules
 .next/
 .DS_Store
+
+# Python-specific additions
+backend/.env
+backend/__pycache__/
+backend/*.pyc

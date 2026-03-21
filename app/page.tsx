@@ -32,6 +32,94 @@ interface SelectOption {
   label: string
 }
 
+const ROLE_PRESETS: SelectOption[] = [
+  { value: "Software Engineer", label: "Software Engineer" },
+  { value: "Product Manager", label: "Product Manager" },
+  { value: "Data Scientist", label: "Data Scientist" },
+]
+
+function RoleCombobox({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const query = value.trim().toLowerCase()
+  const suggestions = ROLE_PRESETS.filter(
+    (opt) => !query || opt.label.toLowerCase().includes(query),
+  )
+
+  return (
+    <div className="space-y-2" ref={rootRef}>
+      <label className="text-sm text-muted-foreground flex items-center gap-2">
+        <Briefcase className="h-4 w-4" />
+        Role
+      </label>
+      <div className="relative flex rounded-lg border border-border bg-secondary focus-within:ring-2 focus-within:ring-primary/50 focus-within:border-primary/50">
+        <input
+          type="text"
+          value={value}
+          onChange={(e) => {
+            onChange(e.target.value)
+            setIsOpen(true)
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder="Select a role or type your own"
+          autoComplete="off"
+          className="flex-1 min-w-0 bg-transparent px-4 py-3 text-foreground placeholder:text-muted-foreground outline-none rounded-l-lg"
+        />
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-label="Toggle role suggestions"
+          onClick={() => setIsOpen((o) => !o)}
+          className="shrink-0 px-3 border-l border-border text-muted-foreground hover:text-foreground transition-colors rounded-r-lg"
+        >
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {isOpen && suggestions.length > 0 ? (
+          <div className="absolute z-50 left-0 right-0 top-full mt-2 bg-card border border-border rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
+            {suggestions.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.label)
+                  setIsOpen(false)
+                }}
+                className={`w-full px-4 py-3 text-left hover:bg-secondary transition-colors ${
+                  value === option.label ? "text-primary bg-primary/10" : "text-foreground"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Pick Software Engineer, Product Manager, Data Scientist, or enter any job title.
+      </p>
+    </div>
+  )
+}
+
 // Custom Select Component
 function CustomSelect({
   label,
@@ -106,22 +194,16 @@ function CustomSelect({
 function SetupScreen({
   onStart,
   isStarting,
+  onClientError,
 }: {
   onStart: (setup: SetupInput) => void | Promise<void>
   isStarting: boolean
+  onClientError: (message: string) => void
 }) {
-  const [role, setRole] = useState("software-engineer")
+  const [role, setRole] = useState("Software Engineer")
   const [style, setStyle] = useState("behavioral")
   const [vibe, setVibe] = useState("startup")
   const [difficulty, setDifficulty] = useState("medium")
-
-  const roleOptions: SelectOption[] = [
-    { value: "software-engineer", label: "Software Engineer" },
-    { value: "product-manager", label: "Product Manager" },
-    { value: "data-scientist", label: "Data Scientist" },
-    { value: "designer", label: "UX Designer" },
-    { value: "marketing", label: "Marketing Manager" },
-  ]
 
   const styleOptions: SelectOption[] = [
     { value: "behavioral", label: "Behavioral" },
@@ -145,7 +227,12 @@ function SetupScreen({
   ]
 
   const handleStart = () => {
-    void onStart({ role, style, vibe, difficulty })
+    const trimmedRole = role.trim()
+    if (!trimmedRole) {
+      onClientError("Please enter or select a role.")
+      return
+    }
+    void onStart({ role: trimmedRole, style, vibe, difficulty })
   }
 
   return (
@@ -166,13 +253,7 @@ function SetupScreen({
 
         {/* Form */}
         <div className="space-y-5 bg-card border border-border rounded-xl p-6">
-          <CustomSelect
-            label="Role"
-            icon={Briefcase}
-            options={roleOptions}
-            value={role}
-            onChange={setRole}
-          />
+          <RoleCombobox value={role} onChange={setRole} />
           <CustomSelect
             label="Interview Style"
             icon={MessageSquare}
@@ -600,7 +681,11 @@ export default function InterviewPilot() {
       ) : null}
 
       {activeView === "setup" && (
-        <SetupScreen onStart={handleSetupStart} isStarting={isStarting} />
+        <SetupScreen
+          onStart={handleSetupStart}
+          isStarting={isStarting}
+          onClientError={(message) => setToastError(message)}
+        />
       )}
       {activeView === "interview" && plan && (
         <InterviewScreen plan={plan} onEnd={handleInterviewEnd} />

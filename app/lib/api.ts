@@ -68,6 +68,16 @@ function apiBase(): string {
   return raw.replace(/\/$/, "")
 }
 
+function errorMessageFromBody(text: string, status: number, statusText: string): string {
+  try {
+    const j = JSON.parse(text) as { detail?: unknown }
+    if (typeof j.detail === "string") return j.detail
+  } catch {
+    /* use raw text */
+  }
+  return text || `${status} ${statusText}`
+}
+
 async function postJson<TResponse>(path: string, body: unknown): Promise<TResponse> {
   const res = await fetch(`${apiBase()}${path}`, {
     method: "POST",
@@ -76,7 +86,7 @@ async function postJson<TResponse>(path: string, body: unknown): Promise<TRespon
   })
   if (!res.ok) {
     const text = await res.text()
-    throw new Error(text || `${res.status} ${res.statusText}`)
+    throw new Error(errorMessageFromBody(text, res.status, res.statusText))
   }
   return res.json() as Promise<TResponse>
 }
