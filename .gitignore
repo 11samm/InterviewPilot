@@ -10,6 +10,9 @@ next.user-config.*
 # Environment variables
 .env*.local
 
+# Python backend
+backend/.venv/
+
 # Common ignores
 node_modules
 .next/
