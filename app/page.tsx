@@ -1,6 +1,6 @@
 "use client"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import {
   planInterview,
   analyzeInterview,
@@ -9,6 +9,8 @@ import {
   type PlanOutput,
   type SetupInput,
 } from "@/app/lib/api"
+import { useLiveAPI } from "@/app/hooks/useLiveAPI"
+import { useSpeechRecognition } from "@/app/hooks/useSpeechRecognition"
 import {
   Briefcase,
   MessageSquare,
@@ -295,6 +297,7 @@ function SetupScreen({
 function InterviewScreen({
   plan,
   onEnd,
+  onError,
 }: {
   plan: PlanOutput
   onEnd: (payload: {
@@ -302,83 +305,134 @@ function InterviewScreen({
     duration_seconds: number
     face_metrics: FaceMetric[]
   }) => void | Promise<void>
+  onError: (message: string) => void
 }) {
-  const [timeLeft, setTimeLeft] = useState(30)
-  const [fillerWords, setFillerWords] = useState(3)
-  const [eyeContact, setEyeContact] = useState(85)
-  const [speechPace, setSpeechPace] = useState(140)
-  const [isEnding, setIsEnding] = useState(false)
-  const sessionStartRef = useRef<number>(Date.now())
+  // ─── State ────────────────────────────────────────────────────────────────────
+  const [hasStarted, setHasStarted] = useState(false)       // user clicked "Start"
+  const [isSubmitting, setIsSubmitting] = useState(false)   // waiting for onEnd
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)   // elapsed timer
 
-  useEffect(() => {
-    sessionStartRef.current = Date.now()
-  }, [plan])
+  // ─── Refs ────────────────────────────────────────────────────────────────────
+  const sessionStartRef = useRef<number>(0)
+  const isEndingRef = useRef(false) // guard against double-submit
 
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => {
-        if (prev <= 1) {
-          clearInterval(timer)
-          return 0
-        }
-        return prev - 1
-      })
-    }, 1000)
+  // ─── Speech Recognition ───────────────────────────────────────────────────────
+  const {
+    startRecognition,
+    stopRecognition,
+    getTranscript,
+    liveTranscript,
+  } = useSpeechRecognition()
 
-    // Simulate changing metrics
-    const metricsInterval = setInterval(() => {
-      setFillerWords((prev) => Math.max(0, prev + Math.floor(Math.random() * 3) - 1))
-      setEyeContact((prev) => Math.min(100, Math.max(60, prev + Math.floor(Math.random() * 11) - 5)))
-      setSpeechPace((prev) => Math.min(180, Math.max(100, prev + Math.floor(Math.random() * 21) - 10)))
-    }, 3000)
+  // ─── Computed metrics from live transcript ───────────────────────────────────
+  const FILLER_SET = new Set([
+    "um", "uh", "like", "basically", "literally", "sort", "right", "okay", "yeah",
+  ])
 
-    return () => {
-      clearInterval(timer)
-      clearInterval(metricsInterval)
-    }
-  }, [])
+  const fillerCount = liveTranscript
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => FILLER_SET.has(w)).length
 
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60)
-    const secs = seconds % 60
-    return `${mins.toString().padStart(2, "0")}:${secs.toString().padStart(2, "0")}`
-  }
+  const speechPaceWpm = (() => {
+    if (elapsedSeconds < 5) return 0
+    const words = liveTranscript.trim().split(/\s+/).filter(Boolean).length
+    return Math.round((words / elapsedSeconds) * 60)
+  })()
 
-  const handleEnd = async () => {
-    if (isEnding) return
-    setIsEnding(true)
-    const duration_seconds = (Date.now() - sessionStartRef.current) / 1000
-    const ec = Math.min(100, Math.max(0, eyeContact)) / 100
-    const face_metrics: FaceMetric[] = [
-      { timestamp: 0, eye_contact: ec, head_pitch: 0, head_yaw: 0 },
-      {
-        timestamp: Math.max(0, duration_seconds * 0.45),
-        eye_contact: Math.min(1, ec + 0.04),
-        head_pitch: 0.02,
-        head_yaw: -0.03,
-      },
-      {
-        timestamp: duration_seconds,
-        eye_contact: ec,
-        head_pitch: -0.01,
-        head_yaw: 0.02,
-      },
-    ]
-    const transcript = [
-      `Question 1: ${plan.questions[0]}`,
-      plan.questions[1] ? `Question 2: ${plan.questions[1]}` : "",
-      "[Simulated transcript] The candidate walked through a concrete example, described their actions, and summarized outcomes.",
-    ]
-      .filter(Boolean)
-      .join("\n\n")
+  // ─── Handoff: collect data and call onEnd ────────────────────────────────────
+  // Called by BOTH Gemini's end_interview tool AND the "End Early" button.
+  // isEndingRef prevents double-submission if both fire simultaneously.
+  const submitHandoff = useCallback(async () => {
+    if (isEndingRef.current) return
+    isEndingRef.current = true
+    setIsSubmitting(true)
+
+    stopRecognition()
+    const transcript = getTranscript()
+    const duration_seconds = sessionStartRef.current
+      ? (Date.now() - sessionStartRef.current) / 1000
+      : 0
+    // Sprint 5: replace with real faceMetrics from useFaceTracker
+    const face_metrics: FaceMetric[] = []
 
     try {
       await onEnd({ transcript, duration_seconds, face_metrics })
-    } finally {
-      setIsEnding(false)
+    } catch {
+      // onEnd / parent handles errors; isSubmitting stays true if we navigated away
+      setIsSubmitting(false)
     }
+  }, [stopRecognition, getTranscript, onEnd])
+
+  // ─── Live API ─────────────────────────────────────────────────────────────────
+  const { startSession, stopSession, isConnected, isGeminiSpeaking } = useLiveAPI({
+    apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY ?? "",
+    questions: plan.questions,
+    rubric: plan.rubric,
+    onInterviewComplete: () => {
+      // Gemini called end_interview — WebSocket is already tearing down
+      void submitHandoff()
+    },
+    onError,
+  })
+
+  // ─── Side effects ─────────────────────────────────────────────────────────────
+
+  // Start elapsed timer once Live API is connected
+  useEffect(() => {
+    if (!isConnected) return
+    if (sessionStartRef.current === 0) {
+      sessionStartRef.current = Date.now()
+    }
+    const interval = setInterval(() => {
+      setElapsedSeconds(Math.round((Date.now() - sessionStartRef.current) / 1000))
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [isConnected])
+
+  // Start STT once Live API is connected (mic permission already granted by getUserMedia)
+  useEffect(() => {
+    if (isConnected) {
+      startRecognition()
+    }
+  }, [isConnected, startRecognition])
+
+  // ─── Handlers ────────────────────────────────────────────────────────────────
+
+  // Called from "Start Live Session" button — must remain a synchronous click handler
+  // so AudioContext creation inside startSession() happens within the user gesture.
+  const handleStartSession = () => {
+    setHasStarted(true)
+    isEndingRef.current = false
+    sessionStartRef.current = 0
+    setElapsedSeconds(0)
+    void startSession()
   }
 
+  // Emergency exit — user terminates before Gemini fires end_interview
+  const handleEndEarly = () => {
+    stopSession()     // closes WebSocket; does NOT call onInterviewComplete
+    void submitHandoff() // manually trigger the handoff
+  }
+
+  // ─── Helpers ─────────────────────────────────────────────────────────────────
+  const formatTime = (s: number) => {
+    const m = Math.floor(s / 60)
+    const sec = s % 60
+    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`
+  }
+
+  // Status badge config
+  type BadgeConfig = { label: string; dotClass: string; textClass: string }
+  const badge: BadgeConfig | null = !hasStarted
+    ? null
+    : !isConnected
+    ? { label: "Connecting…", dotClass: "bg-yellow-400", textClass: "text-yellow-400" }
+    : isGeminiSpeaking
+    ? { label: "AI Speaking", dotClass: "bg-blue-400", textClass: "text-blue-400" }
+    : { label: "Your Turn", dotClass: "bg-green-400", textClass: "text-green-400" }
+
+  // ─── Render ──────────────────────────────────────────────────────────────────
   return (
     <div className="min-h-screen flex flex-col bg-background">
       {/* Top Bar */}
@@ -388,31 +442,46 @@ function InterviewScreen({
           <span className="font-semibold text-foreground">InterviewPilot</span>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2">
-            <span className="relative flex h-3 w-3">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-red-400 opacity-75"></span>
-              <span className="relative inline-flex rounded-full h-3 w-3 bg-red-500"></span>
-            </span>
-            <span className="text-sm text-red-400 font-medium">Recording</span>
-          </div>
+          {badge ? (
+            <div className="flex items-center gap-2">
+              <span className="relative flex h-3 w-3">
+                <span
+                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${badge.dotClass}`}
+                />
+                <span className={`relative inline-flex rounded-full h-3 w-3 ${badge.dotClass}`} />
+              </span>
+              <span className={`text-sm font-medium ${badge.textClass}`}>{badge.label}</span>
+            </div>
+          ) : null}
           <div className="px-3 py-1 bg-secondary rounded-lg text-foreground font-mono text-sm">
-            {formatTime(timeLeft)}
+            {formatTime(elapsedSeconds)}
           </div>
         </div>
       </header>
 
       {/* Main Content */}
       <div className="flex-1 flex p-6 gap-6">
-        {/* Main Stage - Webcam Placeholder */}
+        {/* Main Stage */}
         <div className="flex-1 lg:w-[70%] relative">
           <div className="w-full h-full min-h-[400px] bg-card rounded-xl border border-border relative overflow-hidden shadow-[0_0_60px_rgba(147,51,234,0.1)]">
-            {/* Webcam placeholder */}
+            {/* Webcam placeholder — Sprint 5 replaces with real <video> */}
             <div className="absolute inset-0 flex items-center justify-center">
               <Video className="h-24 w-24 text-muted-foreground/30" />
             </div>
 
+            {/* Gemini speaking pulse overlay */}
+            {isGeminiSpeaking && (
+              <div className="absolute top-4 right-4 flex items-center gap-2 bg-blue-500/20 border border-blue-400/30 rounded-full px-3 py-1">
+                <span className="relative flex h-2 w-2">
+                  <span className="animate-ping absolute h-full w-full rounded-full bg-blue-400 opacity-75" />
+                  <span className="relative h-2 w-2 rounded-full bg-blue-400" />
+                </span>
+                <span className="text-xs text-blue-400 font-medium">AI Speaking</span>
+              </div>
+            )}
+
             {/* Question Overlay */}
-            <div className="absolute bottom-6 left-6 right-6">
+            <div className="absolute bottom-6 left-6 right-6 space-y-3">
               <div className="backdrop-blur-xl bg-card/60 border border-border/50 rounded-xl p-6 shadow-xl">
                 <p className="text-lg text-foreground leading-relaxed text-balance">
                   &ldquo;{plan.questions[0]}&rdquo;
@@ -423,7 +492,31 @@ function InterviewScreen({
                   </p>
                 ) : null}
               </div>
+
+              {/* Live transcript — only shown once connected and user has spoken */}
+              {isConnected && liveTranscript ? (
+                <div className="backdrop-blur-sm bg-secondary/70 border border-border/30 rounded-lg px-4 py-2 max-h-16 overflow-y-auto">
+                  <p className="text-xs text-muted-foreground leading-relaxed">{liveTranscript}</p>
+                </div>
+              ) : null}
             </div>
+
+            {/* Pre-start overlay — blocks HUD until user clicks to grant mic */}
+            {!hasStarted ? (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/70 backdrop-blur-md z-10 gap-4">
+                <p className="text-muted-foreground text-sm">
+                  Your microphone will be activated when you click start.
+                </p>
+                <button
+                  type="button"
+                  onClick={handleStartSession}
+                  className="flex items-center gap-2 px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/50"
+                >
+                  <Mic className="h-5 w-5" />
+                  Start Live Session
+                </button>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -433,7 +526,7 @@ function InterviewScreen({
             Live Metrics
           </h3>
 
-          {/* Filler Words */}
+          {/* Filler Words — real count from transcript */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/20 rounded-lg">
@@ -442,11 +535,14 @@ function InterviewScreen({
               <span className="text-sm text-muted-foreground">Filler Words</span>
             </div>
             <p className="text-2xl font-bold text-foreground">
-              Ums/Ahs: <span className="text-primary">{fillerWords}</span>
+              Ums/Ahs:{" "}
+              <span className={fillerCount > 5 ? "text-destructive" : "text-primary"}>
+                {fillerCount}
+              </span>
             </p>
           </div>
 
-          {/* Eye Contact */}
+          {/* Eye Contact — placeholder until Sprint 5 MediaPipe */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-accent/20 rounded-lg">
@@ -455,17 +551,12 @@ function InterviewScreen({
               <span className="text-sm text-muted-foreground">Eye Contact</span>
             </div>
             <p className="text-2xl font-bold text-foreground">
-              <span className="text-accent">{eyeContact}%</span>
+              <span className="text-accent">—</span>
             </p>
-            <div className="h-2 bg-secondary rounded-full overflow-hidden">
-              <div
-                className="h-full bg-accent transition-all duration-500"
-                style={{ width: `${eyeContact}%` }}
-              />
-            </div>
+            <p className="text-xs text-muted-foreground">Enabled in Sprint 5</p>
           </div>
 
-          {/* Speech Pace */}
+          {/* Speech Pace — derived from transcript length / elapsed */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/20 rounded-lg">
@@ -474,25 +565,38 @@ function InterviewScreen({
               <span className="text-sm text-muted-foreground">Speech Pace</span>
             </div>
             <p className="text-2xl font-bold text-foreground">
-              <span className="text-primary">{speechPace}</span>{" "}
-              <span className="text-sm font-normal text-muted-foreground">WPM</span>
+              <span className="text-primary">{speechPaceWpm > 0 ? speechPaceWpm : "—"}</span>
+              {speechPaceWpm > 0 ? (
+                <span className="text-sm font-normal text-muted-foreground"> WPM</span>
+              ) : null}
             </p>
           </div>
         </div>
       </div>
 
-      {/* Floating Control Bar */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
-        <button
-          type="button"
-          onClick={() => void handleEnd()}
-          disabled={isEnding}
-          className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all duration-300 flex items-center gap-2 disabled:opacity-60 disabled:pointer-events-none"
-        >
-          <span className="h-2 w-2 bg-white rounded-full" />
-          {isEnding ? "Submitting…" : "End Interview"}
-        </button>
-      </div>
+      {/* Floating End Early Button — only shown after session started */}
+      {hasStarted && !isSubmitting ? (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
+          <button
+            type="button"
+            onClick={handleEndEarly}
+            disabled={!isConnected}
+            className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all duration-300 flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+          >
+            <span className="h-2 w-2 bg-white rounded-full" />
+            End Early
+          </button>
+        </div>
+      ) : null}
+
+      {isSubmitting ? (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
+          <div className="px-8 py-3 bg-secondary text-muted-foreground font-semibold rounded-full flex items-center gap-2">
+            <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+            Submitting…
+          </div>
+        </div>
+      ) : null}
     </div>
   )
 }
@@ -688,7 +792,11 @@ export default function InterviewPilot() {
         />
       )}
       {activeView === "interview" && plan && (
-        <InterviewScreen plan={plan} onEnd={handleInterviewEnd} />
+        <InterviewScreen
+          plan={plan}
+          onEnd={handleInterviewEnd}
+          onError={(msg) => setToastError(msg)}
+        />
       )}
       {activeView === "processing" && <ProcessingScreen />}
       {activeView === "results" && results && (
