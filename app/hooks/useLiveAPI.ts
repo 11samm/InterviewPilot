@@ -87,7 +87,34 @@ SCRIPT — follow this exactly, word for word:
 RULES:
 - You MUST call end_interview() after step 5. This is mandatory, not optional.
 - Do not add questions, comments, or extra sentences beyond the script.
+- The session starts with the candidate listening and silent. Begin speaking immediately with step 1 (your greeting) and continue into step 2 (question 1) in the same opening turn — do not wait for them to talk first.
 - Rubric (context only, do not read aloud): ${rubric}`
+}
+
+/** Prompt the model to open the interview; native-audio Live often waits for client input otherwise. */
+function sendInterviewKickoff(ws: WebSocket) {
+  if (ws.readyState !== WebSocket.OPEN) return
+  try {
+    ws.send(
+      JSON.stringify({
+        clientContent: {
+          turns: [
+            {
+              role: "user",
+              parts: [
+                {
+                  text: "I'm here and listening. Please start the interview.",
+                },
+              ],
+            },
+          ],
+          turnComplete: true,
+        },
+      }),
+    )
+  } catch {
+    /* ignore */
+  }
 }
 
 // Helper to extract Gemini's server-side transcript from a message
@@ -223,6 +250,7 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
   const goodbyeAutoEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   )
+  const micPromiseRef = useRef<Promise<MediaStream> | null>(null)
   /** Bumped on every teardown so Strict Mode / remounts don't treat aborted sockets as failures. */
   const liveSessionGenerationRef = useRef(0)
 
@@ -361,6 +389,15 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
 
     const sessionGeneration = liveSessionGenerationRef.current
 
+    // Fire the getUserMedia request NOW — within the user gesture context.
+    // This makes the browser permission dialog appear immediately instead of
+    // 2-5 seconds later when setup_complete arrives. The mic and WebSocket
+    // handshake now happen in parallel, not sequentially.
+    micPromiseRef.current = navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+    })
+    // Do not await — let it race with WebSocket setup
+
     // In React 18 Strict Mode (dev), effect cleanup runs right after the effect
     // returns. Defer opening the socket so that first-pass cleanup can bump
     // `liveSessionGenerationRef` without ever creating a WebSocket to close
@@ -372,6 +409,10 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
       void preInputCtx.close().catch(() => {})
       if (outputCtxRef.current === preOutputCtx) outputCtxRef.current = null
       if (inputCtxRef.current === preInputCtx) inputCtxRef.current = null
+      micPromiseRef.current
+        ?.then((s) => s.getTracks().forEach((t) => t.stop()))
+        .catch(() => {})
+      micPromiseRef.current = null
       return
     }
 
@@ -403,13 +444,14 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
       await outputCtx.resume()
       nextPlayTimeRef.current = { current: outputCtx.currentTime }
 
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation: true,
-          noiseSuppression: true,
-          channelCount: 1,
-        },
-      })
+      // Await the mic request that was already started in startSession().
+      // If the user hasn't granted permission yet, this awaits the dialog.
+      // In most cases it's already resolved → zero additional delay.
+      const stream = await (micPromiseRef.current ??
+        navigator.mediaDevices.getUserMedia({
+          audio: { echoCancellation: true, noiseSuppression: true, channelCount: 1 },
+        }))
+      micPromiseRef.current = null
       mediaStreamRef.current = stream
 
       await inputCtx.resume()
@@ -699,7 +741,12 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
                 setupWaitTimeoutRef.current = null
               }
               realtimeCaptureReadyRef.current = true
+              setIsGeminiSpeaking(true)
               setIsConnected(true)
+              const active = wsRef.current
+              if (active && active.readyState === WebSocket.OPEN) {
+                sendInterviewKickoff(active)
+              }
             })
             .catch((e) => {
               if (liveSessionGenerationRef.current !== sessionGeneration) {
