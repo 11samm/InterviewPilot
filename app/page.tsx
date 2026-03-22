@@ -11,6 +11,7 @@ import {
   type PlanOutput,
   type SetupInput,
 } from "@/app/lib/api"
+import { useFaceTracker } from "@/app/hooks/useFaceTracker"
 import { useLiveAPI } from "@/app/hooks/useLiveAPI"
 import {
   Briefcase,
@@ -18,7 +19,6 @@ import {
   Building2,
   Gauge,
   ChevronDown,
-  Video,
   Mic,
   Eye,
   Activity,
@@ -445,6 +445,9 @@ function InterviewScreen({
     onError,
   })
 
+  const { videoRef, eyeContactScore, getFaceMetrics, startTracking, stopTracking } =
+    useFaceTracker()
+
   // ─── Computed metrics from live transcript ───────────────────────────────────
   const FILLER_SET = new Set([
     "um", "uh", "like", "basically", "literally", "sort", "right", "okay", "yeah",
@@ -473,8 +476,8 @@ function InterviewScreen({
     const duration_seconds = sessionStartRef.current
       ? (Date.now() - sessionStartRef.current) / 1000
       : 0
-    // Sprint 5: replace with real faceMetrics from useFaceTracker
-    const face_metrics: FaceMetric[] = []
+    stopTracking()
+    const face_metrics = getFaceMetrics()
 
     try {
       await onEnd({ transcript, duration_seconds, face_metrics })
@@ -482,7 +485,7 @@ function InterviewScreen({
       // onEnd / parent handles errors; isSubmitting stays true if we navigated away
       setIsSubmitting(false)
     }
-  }, [getUserTranscript, onEnd])
+  }, [getUserTranscript, onEnd, stopTracking, getFaceMetrics])
 
   // ─── Side effects ─────────────────────────────────────────────────────────────
 
@@ -533,6 +536,7 @@ function InterviewScreen({
     setCurrentQuestionIndex(0)
     geminiTurnCountRef.current = 0
     prevGeminiSpeakingRef.current = false
+    void startTracking()
     void startSession()
   }
 
@@ -591,10 +595,13 @@ function InterviewScreen({
         {/* Main Stage */}
         <div className="flex-1 lg:w-[70%] relative">
           <div className="w-full h-full min-h-[400px] bg-card rounded-xl border border-border relative overflow-hidden shadow-[0_0_60px_rgba(147,51,234,0.1)]">
-            {/* Webcam placeholder — Sprint 5 replaces with real <video> */}
-            <div className="absolute inset-0 flex items-center justify-center">
-              <Video className="h-24 w-24 text-muted-foreground/30" />
-            </div>
+            <video
+              ref={videoRef}
+              autoPlay
+              muted
+              playsInline
+              className="absolute inset-0 w-full h-full object-cover"
+            />
 
             {/* Gemini speaking pulse overlay */}
             {isGeminiSpeaking && (
@@ -669,7 +676,7 @@ function InterviewScreen({
             </p>
           </div>
 
-          {/* Eye Contact — placeholder until Sprint 5 MediaPipe */}
+          {/* Eye Contact — live from MediaPipe FaceLandmarker */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-accent/20 rounded-lg">
@@ -678,9 +685,18 @@ function InterviewScreen({
               <span className="text-sm text-muted-foreground">Eye Contact</span>
             </div>
             <p className="text-2xl font-bold text-foreground">
-              <span className="text-accent">—</span>
+              {hasStarted && isConnected ? (
+                <span
+                  className={
+                    eyeContactScore > 0.6 ? "text-accent" : "text-destructive"
+                  }
+                >
+                  {Math.round(eyeContactScore * 100)}%
+                </span>
+              ) : (
+                <span className="text-accent">—</span>
+              )}
             </p>
-            <p className="text-xs text-muted-foreground">Enabled in Sprint 5</p>
           </div>
 
           {/* Speech Pace — derived from transcript / user speaking time; waits for 5s first */}
