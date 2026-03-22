@@ -23,6 +23,9 @@ const MODEL_NAME = "gemini-2.5-flash-native-audio-preview-12-2025"
 const WSS_URL =
   "wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContent"
 
+/** Let closing audio play before we tear down (tool call + auto-goodbye). */
+const INTERVIEW_HANDOFF_DELAY_MS = 3000
+
 function buildLiveWebSocketUrl(apiKey: string): string {
   const key = apiKey.trim()
   const base = WSS_URL.split("?")[0]?.replace(/\/$/, "") ?? WSS_URL
@@ -71,15 +74,34 @@ export type UseLiveAPIOptions = {
 function buildSystemInstruction(questions: string[], rubric: string): string {
   const q1 = questions[0] ?? ""
   const q2 = questions[1] ?? ""
-  return `You are a professional interviewer. Start by introducing yourself briefly.
-Then ask Question 1: "${q1}"
-Wait for the user's full answer. Acknowledge their answer in one sentence.
-Then ask Question 2: "${q2}"
-Wait for the user's full answer. Thank them and say goodbye.
-Then IMMEDIATELY call the end_interview function tool with no arguments.
-Do not ask any follow-up questions. Stay strictly on script.
+  return `You are a strict, professional interviewer running a structured mock interview.
 
-Interview rubric (for context only; do not read aloud): ${rubric}`
+SCRIPT — follow this exactly, word for word:
+1. Greet the candidate in exactly ONE sentence (e.g. "Hi, I'm your AI interviewer today.")
+2. Ask: "${q1}" — wait silently for their full answer.
+3. Say one sentence of acknowledgment (do NOT ask follow-ups).
+4. Ask: "${q2}" — wait silently for their full answer.
+5. Say exactly: "Thank you, that concludes our interview. Good luck!"
+6. CALL end_interview() IMMEDIATELY. Do not speak any more words after calling it.
+
+RULES:
+- You MUST call end_interview() after step 5. This is mandatory, not optional.
+- Do not add questions, comments, or extra sentences beyond the script.
+- Rubric (context only, do not read aloud): ${rubric}`
+}
+
+// Helper to extract Gemini's server-side transcript from a message
+function extractOutputTranscription(msg: unknown): string {
+  if (!msg || typeof msg !== "object") return ""
+  const o = msg as Record<string, unknown>
+  const sc = (o.serverContent ?? o.server_content) as
+    | Record<string, unknown>
+    | undefined
+  if (!sc) return ""
+  const ot = (sc.outputTranscription ?? sc.output_transcription) as
+    | { text?: string }
+    | undefined
+  return ot?.text ?? ""
 }
 
 function collectEndInterviewCalls(
@@ -196,6 +218,11 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
   const captureStartRequestedRef = useRef(false)
   const setupWaitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inboundLogCountRef = useRef(0)
+  const geminiTranscriptRef = useRef<string>("")
+  const toolHandoffDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const goodbyeAutoEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
   /** Bumped on every teardown so Strict Mode / remounts don't treat aborted sockets as failures. */
   const liveSessionGenerationRef = useRef(0)
 
@@ -239,11 +266,20 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
       clearTimeout(setupWaitTimeoutRef.current)
       setupWaitTimeoutRef.current = null
     }
+    if (toolHandoffDelayRef.current != null) {
+      clearTimeout(toolHandoffDelayRef.current)
+      toolHandoffDelayRef.current = null
+    }
+    if (goodbyeAutoEndTimeoutRef.current != null) {
+      clearTimeout(goodbyeAutoEndTimeoutRef.current)
+      goodbyeAutoEndTimeoutRef.current = null
+    }
     isSetupSentRef.current = false
     setupCompleteReceivedRef.current = false
     realtimeCaptureReadyRef.current = false
     captureStartRequestedRef.current = false
     inboundLogCountRef.current = 0
+    geminiTranscriptRef.current = ""
     setIsConnected(false)
     setIsGeminiSpeaking(false)
     try {
@@ -452,6 +488,8 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
           generationConfig: {
             responseModalities: ["AUDIO"],
           },
+          inputAudioTranscription: {},
+          outputAudioTranscription: {},
           systemInstruction: {
             parts: [{ text: systemInstruction }],
           },
@@ -586,6 +624,67 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
 
       logIfServerErrorPayload(msg)
 
+      const geminiText = extractOutputTranscription(msg)
+      if (geminiText) {
+        geminiTranscriptRef.current += geminiText + " "
+        liveLog("Gemini said:", geminiText)
+      }
+
+      const rawEndEarly = collectEndInterviewCalls(msg)
+      const seenIdsEarly = new Set<string>()
+      const endCalls = rawEndEarly.filter((c) => {
+        if (seenIdsEarly.has(c.id)) return false
+        seenIdsEarly.add(c.id)
+        return true
+      })
+
+      const GOODBYE_PHRASES = [
+        "good luck",
+        "best of luck",
+        "take care",
+        "goodbye",
+        "good bye",
+        "thank you for your time",
+        "that concludes",
+      ]
+      const combined = geminiTranscriptRef.current.toLowerCase()
+      const saidGoodbye = GOODBYE_PHRASES.some((p) => combined.includes(p))
+
+      if (endCalls.length > 0) {
+        if (goodbyeAutoEndTimeoutRef.current != null) {
+          clearTimeout(goodbyeAutoEndTimeoutRef.current)
+          goodbyeAutoEndTimeoutRef.current = null
+        }
+        if (toolHandoffDelayRef.current != null) {
+          clearTimeout(toolHandoffDelayRef.current)
+          toolHandoffDelayRef.current = null
+        }
+        const calls = endCalls
+        toolHandoffDelayRef.current = setTimeout(() => {
+          toolHandoffDelayRef.current = null
+          if (liveSessionGenerationRef.current !== sessionGeneration) return
+          if (endedRef.current) return
+          handleEndInterview(ws, calls)
+        }, INTERVIEW_HANDOFF_DELAY_MS)
+      } else if (
+        saidGoodbye &&
+        hasGenerationComplete(msg) &&
+        !endedRef.current &&
+        toolHandoffDelayRef.current == null
+      ) {
+        if (goodbyeAutoEndTimeoutRef.current != null) return
+        goodbyeAutoEndTimeoutRef.current = setTimeout(() => {
+          goodbyeAutoEndTimeoutRef.current = null
+          if (liveSessionGenerationRef.current !== sessionGeneration) return
+          if (!endedRef.current) {
+            liveLog(
+              "Auto-triggering handoff: Gemini said goodbye without function call",
+            )
+            handleEndInterview(ws, [{ id: "auto_goodbye", name: "end_interview" }])
+          }
+        }, INTERVIEW_HANDOFF_DELAY_MS)
+      }
+
       if (isSetupCompleteMessage(msg)) {
         setupCompleteReceivedRef.current = true
         if (!captureStartRequestedRef.current) {
@@ -615,18 +714,6 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
               endedRef.current = true
             })
         }
-      }
-
-      const rawEnd = collectEndInterviewCalls(msg)
-      const seenIds = new Set<string>()
-      const endCalls = rawEnd.filter((c) => {
-        if (seenIds.has(c.id)) return false
-        seenIds.add(c.id)
-        return true
-      })
-      if (endCalls.length > 0) {
-        handleEndInterview(ws, endCalls)
-        return
       }
 
       if (hasGenerationComplete(msg)) {

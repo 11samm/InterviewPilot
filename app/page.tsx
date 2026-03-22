@@ -341,7 +341,7 @@ function InterviewScreen({
   })()
 
   // ─── Handoff: collect data and call onEnd ────────────────────────────────────
-  // Called by BOTH Gemini's end_interview tool AND the "End Early" button.
+  // Called by Gemini's end_interview tool and the floating Complete / End Early actions.
   // isEndingRef prevents double-submission if both fire simultaneously.
   const submitHandoff = useCallback(async () => {
     if (isEndingRef.current) return
@@ -574,14 +574,22 @@ function InterviewScreen({
         </div>
       </div>
 
-      {/* Floating End Early Button — only shown after session started */}
-      {hasStarted && !isSubmitting ? (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
+      {hasStarted && isConnected && !isSubmitting ? (
+        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3">
+          <button
+            type="button"
+            onClick={() => {
+              stopSession()
+              void submitHandoff()
+            }}
+            className="px-6 py-3 bg-secondary border border-border text-foreground font-medium rounded-full hover:border-primary/50 transition-all"
+          >
+            Complete Interview
+          </button>
           <button
             type="button"
             onClick={handleEndEarly}
-            disabled={!isConnected}
-            className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all duration-300 flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+            className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all flex items-center gap-2"
           >
             <span className="h-2 w-2 bg-white rounded-full" />
             End Early
