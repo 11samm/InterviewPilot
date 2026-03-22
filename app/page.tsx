@@ -421,6 +421,8 @@ function InterviewScreen({
   // ─── Refs ────────────────────────────────────────────────────────────────────
   const sessionStartRef = useRef<number>(0)
   const isEndingRef = useRef(false) // guard against double-submit
+  const geminiTurnCountRef = useRef(0)
+  const prevGeminiSpeakingRef = useRef(false)
 
   // ─── Live API ─────────────────────────────────────────────────────────────────
   const {
@@ -503,14 +505,16 @@ function InterviewScreen({
     return () => clearInterval(interval)
   }, [hasStarted, isConnected, isGeminiSpeaking])
 
-  // Advance to Q2 when Gemini says it in the transcript
+  // Advance to next question when Gemini starts speaking again (second turn = Q2)
   useEffect(() => {
-    if (currentQuestionIndex >= 1 || !plan.questions[1]) return
-    const needle = plan.questions[1].slice(0, 30).toLowerCase()
-    if (geminiTranscript.toLowerCase().includes(needle)) {
-      setCurrentQuestionIndex(1)
+    if (isGeminiSpeaking && !prevGeminiSpeakingRef.current) {
+      geminiTurnCountRef.current += 1
+      if (geminiTurnCountRef.current === 2 && plan.questions.length > 1) {
+        setCurrentQuestionIndex(1)
+      }
     }
-  }, [geminiTranscript, currentQuestionIndex, plan.questions])
+    prevGeminiSpeakingRef.current = isGeminiSpeaking
+  }, [isGeminiSpeaking, plan.questions.length])
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
 
@@ -523,6 +527,8 @@ function InterviewScreen({
     setElapsedSeconds(0)
     setUserSpeakingSeconds(0)
     setCurrentQuestionIndex(0)
+    geminiTurnCountRef.current = 0
+    prevGeminiSpeakingRef.current = false
     void startSession()
   }
 
