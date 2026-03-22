@@ -22,3 +22,4 @@ node_modules
 backend/.env
 backend/__pycache__/
 backend/*.pyc
+.env.local
