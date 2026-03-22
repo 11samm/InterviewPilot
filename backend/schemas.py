@@ -8,6 +8,7 @@ class SetupInput(BaseModel):
     style: str
     vibe: str
     difficulty: str
+    num_questions: int = 2
 
 
 class FaceMetric(BaseModel):
@@ -18,7 +19,7 @@ class FaceMetric(BaseModel):
 
 
 class PlanOutput(BaseModel):
-    questions: Annotated[list[str], Field(min_length=2, max_length=2)]
+    questions: Annotated[list[str], Field(min_length=1, max_length=10)]
     rubric: str
 
 

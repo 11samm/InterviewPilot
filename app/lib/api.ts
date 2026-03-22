@@ -3,6 +3,7 @@ export interface SetupInput {
   style: string
   vibe: string
   difficulty: string
+  num_questions?: number
 }
 
 export interface PlanOutput {

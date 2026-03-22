@@ -40,6 +40,13 @@ const ROLE_PRESETS: SelectOption[] = [
   { value: "Data Scientist", label: "Data Scientist" },
 ]
 
+const VIBE_PRESETS: SelectOption[] = [
+  { value: "startup", label: "Startup" },
+  { value: "big-tech", label: "Big Tech (FAANG)" },
+  { value: "enterprise", label: "Enterprise" },
+  { value: "agency", label: "Agency" },
+]
+
 function RoleCombobox({
   value,
   onChange,
@@ -59,11 +66,6 @@ function RoleCombobox({
     document.addEventListener("mousedown", handleClickOutside)
     return () => document.removeEventListener("mousedown", handleClickOutside)
   }, [])
-
-  const query = value.trim().toLowerCase()
-  const suggestions = ROLE_PRESETS.filter(
-    (opt) => !query || opt.label.toLowerCase().includes(query),
-  )
 
   return (
     <div className="space-y-2" ref={rootRef}>
@@ -95,9 +97,10 @@ function RoleCombobox({
             className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
           />
         </button>
-        {isOpen && suggestions.length > 0 ? (
-          <div className="absolute z-50 left-0 right-0 top-full mt-2 bg-card border border-border rounded-lg shadow-xl overflow-hidden max-h-48 overflow-y-auto">
-            {suggestions.map((option) => (
+        {isOpen && ROLE_PRESETS.length > 0 ? (
+          <div className="absolute z-50 left-0 right-0 top-full mt-2 bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+            <div className="grid grid-cols-2 gap-0 max-h-48 overflow-y-auto">
+            {ROLE_PRESETS.map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -112,11 +115,100 @@ function RoleCombobox({
                 {option.label}
               </button>
             ))}
+            </div>
           </div>
         ) : null}
       </div>
       <p className="text-xs text-muted-foreground">
         Pick Software Engineer, Product Manager, Data Scientist, or enter any job title.
+      </p>
+    </div>
+  )
+}
+
+function VibeCombobox({
+  value,
+  onChange,
+}: {
+  value: string
+  onChange: (value: string) => void
+}) {
+  const [isOpen, setIsOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside)
+    return () => document.removeEventListener("mousedown", handleClickOutside)
+  }, [])
+
+  const isPresetSelected = VIBE_PRESETS.some(
+    (opt) => opt.label === value || opt.value === value,
+  )
+  const displayValue = isPresetSelected
+    ? VIBE_PRESETS.find((opt) => opt.label === value || opt.value === value)?.label ?? value
+    : value
+
+  return (
+    <div className="space-y-2" ref={rootRef}>
+      <label className="text-sm text-muted-foreground flex items-center gap-2">
+        <Building2 className="h-4 w-4" />
+        Company Vibe
+      </label>
+      <div className="relative flex rounded-lg border border-border bg-secondary focus-within:ring-2 focus-within:ring-primary/50 focus-within:border-primary/50">
+        <input
+          type="text"
+          value={displayValue}
+          onChange={(e) => {
+            onChange(e.target.value)
+            setIsOpen(true)
+          }}
+          onFocus={() => setIsOpen(true)}
+          placeholder="Select a vibe or type your own"
+          autoComplete="off"
+          className="flex-1 min-w-0 bg-transparent px-4 py-3 text-foreground placeholder:text-muted-foreground outline-none rounded-l-lg"
+        />
+        <button
+          type="button"
+          aria-expanded={isOpen}
+          aria-label="Toggle vibe suggestions"
+          onClick={() => setIsOpen((o) => !o)}
+          className="shrink-0 px-3 border-l border-border text-muted-foreground hover:text-foreground transition-colors rounded-r-lg"
+        >
+          <ChevronDown
+            className={`h-4 w-4 transition-transform ${isOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {isOpen && VIBE_PRESETS.length > 0 ? (
+          <div className="absolute z-50 left-0 right-0 top-full mt-2 bg-card border border-border rounded-lg shadow-xl overflow-hidden">
+            <div className="grid grid-cols-2 gap-0 max-h-48 overflow-y-auto">
+            {VIBE_PRESETS.map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => {
+                  onChange(option.label)
+                  setIsOpen(false)
+                }}
+                className={`w-full px-4 py-3 text-left hover:bg-secondary transition-colors ${
+                  value === option.label || value === option.value
+                    ? "text-primary bg-primary/10"
+                    : "text-foreground"
+                }`}
+              >
+                {option.label}
+              </button>
+            ))}
+            </div>
+          </div>
+        ) : null}
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Pick Startup, Big Tech, Enterprise, Agency, or enter your own.
       </p>
     </div>
   )
@@ -206,19 +298,13 @@ function SetupScreen({
   const [style, setStyle] = useState("behavioral")
   const [vibe, setVibe] = useState("startup")
   const [difficulty, setDifficulty] = useState("medium")
+  const [numQuestions, setNumQuestions] = useState(2)
 
   const styleOptions: SelectOption[] = [
     { value: "behavioral", label: "Behavioral" },
     { value: "technical", label: "Technical" },
     { value: "case-study", label: "Case Study" },
     { value: "system-design", label: "System Design" },
-  ]
-
-  const vibeOptions: SelectOption[] = [
-    { value: "startup", label: "Startup" },
-    { value: "big-tech", label: "Big Tech (FAANG)" },
-    { value: "enterprise", label: "Enterprise" },
-    { value: "agency", label: "Agency" },
   ]
 
   const difficultyOptions: SelectOption[] = [
@@ -234,12 +320,12 @@ function SetupScreen({
       onClientError("Please enter or select a role.")
       return
     }
-    void onStart({ role: trimmedRole, style, vibe, difficulty })
+    void onStart({ role: trimmedRole, style, vibe, difficulty, num_questions: numQuestions })
   }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-6">
-      <div className="w-full max-w-md space-y-8">
+      <div className="w-full max-w-2xl space-y-8">
         {/* Header */}
         <div className="text-center space-y-3">
           <div className="flex items-center justify-center gap-2 mb-4">
@@ -254,7 +340,7 @@ function SetupScreen({
         </div>
 
         {/* Form */}
-        <div className="space-y-5 bg-card border border-border rounded-xl p-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-5 bg-card border border-border rounded-xl p-6">
           <RoleCombobox value={role} onChange={setRole} />
           <CustomSelect
             label="Interview Style"
@@ -263,13 +349,7 @@ function SetupScreen({
             value={style}
             onChange={setStyle}
           />
-          <CustomSelect
-            label="Company Vibe"
-            icon={Building2}
-            options={vibeOptions}
-            value={vibe}
-            onChange={setVibe}
-          />
+          <VibeCombobox value={vibe} onChange={setVibe} />
           <CustomSelect
             label="Difficulty"
             icon={Gauge}
@@ -277,6 +357,31 @@ function SetupScreen({
             value={difficulty}
             onChange={setDifficulty}
           />
+          <div className="space-y-2 md:col-span-2">
+            <label className="text-sm text-muted-foreground flex items-center gap-2">
+              <MessageSquare className="h-4 w-4" />
+              Number of Questions
+            </label>
+            <div className="flex gap-2 flex-wrap">
+              {[1, 2, 3, 4].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setNumQuestions(n)}
+                  className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                    numQuestions === n
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-secondary text-foreground hover:border-primary/50 border border-border"
+                  }`}
+                >
+                  {n}
+                </button>
+              ))}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              How many interview questions to ask.
+            </p>
+          </div>
         </div>
 
         {/* Start Button */}
@@ -311,6 +416,7 @@ function InterviewScreen({
   const [hasStarted, setHasStarted] = useState(false)       // user clicked "Start"
   const [isSubmitting, setIsSubmitting] = useState(false)   // waiting for onEnd
   const [elapsedSeconds, setElapsedSeconds] = useState(0)   // elapsed timer
+  const [userSpeakingSeconds, setUserSpeakingSeconds] = useState(0)  // only ticks when user speaks (not AI)
 
   // ─── Refs ────────────────────────────────────────────────────────────────────
   const sessionStartRef = useRef<number>(0)
@@ -335,9 +441,9 @@ function InterviewScreen({
     .filter((w) => FILLER_SET.has(w)).length
 
   const speechPaceWpm = (() => {
-    if (elapsedSeconds < 5) return 0
+    if (userSpeakingSeconds < 5) return 0
     const words = liveTranscript.trim().split(/\s+/).filter(Boolean).length
-    return Math.round((words / elapsedSeconds) * 60)
+    return Math.round((words / userSpeakingSeconds) * 60)
   })()
 
   // ─── Handoff: collect data and call onEnd ────────────────────────────────────
@@ -390,6 +496,15 @@ function InterviewScreen({
     return () => clearInterval(interval)
   }, [isConnected])
 
+  // User-speaking timer: only ticks when user is speaking (not when Gemini is)
+  useEffect(() => {
+    if (!hasStarted || !isConnected || isGeminiSpeaking) return
+    const interval = setInterval(() => {
+      setUserSpeakingSeconds((prev) => prev + 1)
+    }, 1000)
+    return () => clearInterval(interval)
+  }, [hasStarted, isConnected, isGeminiSpeaking])
+
   // Start STT once Live API is connected (mic permission already granted by getUserMedia)
   useEffect(() => {
     if (isConnected) {
@@ -406,6 +521,7 @@ function InterviewScreen({
     isEndingRef.current = false
     sessionStartRef.current = 0
     setElapsedSeconds(0)
+    setUserSpeakingSeconds(0)
     void startSession()
   }
 
@@ -556,7 +672,7 @@ function InterviewScreen({
             <p className="text-xs text-muted-foreground">Enabled in Sprint 5</p>
           </div>
 
-          {/* Speech Pace — derived from transcript length / elapsed */}
+          {/* Speech Pace — derived from transcript / user speaking time; waits for 5s first */}
           <div className="bg-card border border-border rounded-xl p-4 space-y-2">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-primary/20 rounded-lg">
@@ -565,10 +681,18 @@ function InterviewScreen({
               <span className="text-sm text-muted-foreground">Speech Pace</span>
             </div>
             <p className="text-2xl font-bold text-foreground">
-              <span className="text-primary">{speechPaceWpm > 0 ? speechPaceWpm : "—"}</span>
               {speechPaceWpm > 0 ? (
-                <span className="text-sm font-normal text-muted-foreground"> WPM</span>
-              ) : null}
+                <>
+                  <span className="text-primary">{speechPaceWpm}</span>
+                  <span className="text-sm font-normal text-muted-foreground"> WPM</span>
+                </>
+              ) : hasStarted && isConnected ? (
+                <span className="text-sm font-normal text-muted-foreground">
+                  Measuring… {userSpeakingSeconds}/5 sec
+                </span>
+              ) : (
+                <span className="text-primary">—</span>
+              )}
             </p>
           </div>
         </div>

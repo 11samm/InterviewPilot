@@ -11,12 +11,11 @@ import {
 } from "@/app/lib/audioUtils"
 
 /** v1beta Bidi (Live) — resource id without `models/` prefix (prepended in setup). */
-const MODEL_NAME = "gemini-2.5-flash-native-audio-preview-12-2025"
+const MODEL_NAME = "gemini-2.5-flash-native-audio-preview-09-2025"
 
 /**
  * v1beta Bidi WebSocket — append exactly one `?key=...` (base path must not contain `?`).
- * Use the native-audio Live model from the current WebSocket guide (older ids like
- * gemini-2.0-flash-live-001 return 1008 “not found / not supported for bidiGenerateContent”).
+ * 12-2025 model has known 1008 bug with tool calling; using 09-2025 workaround.
  * @see https://ai.google.dev/api/live
  * @see https://ai.google.dev/gemini-api/docs/live-api/get-started-websocket
  */
@@ -72,20 +71,33 @@ export type UseLiveAPIOptions = {
 }
 
 function buildSystemInstruction(questions: string[], rubric: string): string {
-  const q1 = questions[0] ?? ""
-  const q2 = questions[1] ?? ""
+  const qList = questions.filter(Boolean)
+  const n = qList.length
+  if (n === 0) {
+    return `You are a professional interviewer. Rubric (context only): ${rubric}`
+  }
+  const parts: string[] = [
+    "1. Greet the candidate in exactly ONE sentence (e.g. \"Hi, I'm your AI interviewer today.\")",
+  ]
+  let step = 2
+  for (let i = 0; i < n; i++) {
+    parts.push(`${step}. Ask: "${qList[i]}" — wait silently for their full answer.`)
+    step += 1
+    if (i < n - 1) {
+      parts.push(`${step}. Say one sentence of acknowledgment (do NOT ask follow-ups).`)
+      step += 1
+    }
+  }
+  parts.push(`${step}. Say exactly: "Thank you, that concludes our interview. Good luck!"`)
+  step += 1
+  parts.push(`${step}. CALL end_interview() IMMEDIATELY. Do not speak any more words after calling it.`)
   return `You are a strict, professional interviewer running a structured mock interview.
 
 SCRIPT — follow this exactly, word for word:
-1. Greet the candidate in exactly ONE sentence (e.g. "Hi, I'm your AI interviewer today.")
-2. Ask: "${q1}" — wait silently for their full answer.
-3. Say one sentence of acknowledgment (do NOT ask follow-ups).
-4. Ask: "${q2}" — wait silently for their full answer.
-5. Say exactly: "Thank you, that concludes our interview. Good luck!"
-6. CALL end_interview() IMMEDIATELY. Do not speak any more words after calling it.
+${parts.join("\n")}
 
 RULES:
-- You MUST call end_interview() after step 5. This is mandatory, not optional.
+- You MUST call end_interview() after step ${step}. This is mandatory, not optional.
 - Do not add questions, comments, or extra sentences beyond the script.
 - The session starts with the candidate listening and silent. Begin speaking immediately with step 1 (your greeting) and continue into step 2 (question 1) in the same opening turn — do not wait for them to talk first.
 - Rubric (context only, do not read aloud): ${rubric}`
@@ -250,6 +262,9 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
   const goodbyeAutoEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   )
+  const geminiSpeakingEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  )
   const micPromiseRef = useRef<Promise<MediaStream> | null>(null)
   /** Bumped on every teardown so Strict Mode / remounts don't treat aborted sockets as failures. */
   const liveSessionGenerationRef = useRef(0)
@@ -301,6 +316,10 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
     if (goodbyeAutoEndTimeoutRef.current != null) {
       clearTimeout(goodbyeAutoEndTimeoutRef.current)
       goodbyeAutoEndTimeoutRef.current = null
+    }
+    if (geminiSpeakingEndTimeoutRef.current != null) {
+      clearTimeout(geminiSpeakingEndTimeoutRef.current)
+      geminiSpeakingEndTimeoutRef.current = null
     }
     isSetupSentRef.current = false
     setupCompleteReceivedRef.current = false
@@ -541,7 +560,7 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
                 {
                   name: "end_interview",
                   description:
-                    "Call this when both questions have been answered and you have said goodbye.",
+                    "Call this when all questions have been answered and you have said goodbye.",
                   parameters: {
                     type: "object",
                     properties: {},
@@ -763,10 +782,6 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
         }
       }
 
-      if (hasGenerationComplete(msg)) {
-        setIsGeminiSpeaking(false)
-      }
-
       forEachModelAudioPart(msg, (b64, mimeType) => {
         if (endedRef.current) return
         setIsGeminiSpeaking(true)
@@ -780,6 +795,34 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
           /* ignore bad chunk */
         }
       })
+
+      // Set isGeminiSpeaking to false only when playback actually ends.
+      // hasGenerationComplete fires when the server stops sending, but queued audio
+      // may still be playing. Delay until the last chunk finishes.
+      if (hasGenerationComplete(msg)) {
+        if (geminiSpeakingEndTimeoutRef.current != null) {
+          clearTimeout(geminiSpeakingEndTimeoutRef.current)
+          geminiSpeakingEndTimeoutRef.current = null
+        }
+        const ctx = outputCtxRef.current
+        if (ctx) {
+          const playbackEndTime = (nextPlayTimeRef.current as { current: number }).current
+          const remainingMs = Math.max(
+            0,
+            Math.ceil((playbackEndTime - ctx.currentTime) * 1000),
+          )
+          if (remainingMs > 0) {
+            geminiSpeakingEndTimeoutRef.current = setTimeout(() => {
+              geminiSpeakingEndTimeoutRef.current = null
+              if (!endedRef.current) setIsGeminiSpeaking(false)
+            }, remainingMs)
+          } else {
+            setIsGeminiSpeaking(false)
+          }
+        } else {
+          setIsGeminiSpeaking(false)
+        }
+      }
     }
   }, [handleEndInterview, teardownConnection])
 
