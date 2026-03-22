@@ -4,7 +4,9 @@ import { useState, useEffect, useRef, useCallback } from "react"
 import {
   planInterview,
   analyzeInterview,
+  deepDiveInterview,
   type AnalyzeOutput,
+  type DeepDiveOutput,
   type FaceMetric,
   type PlanOutput,
   type SetupInput,
@@ -505,12 +507,14 @@ function InterviewScreen({
     return () => clearInterval(interval)
   }, [hasStarted, isConnected, isGeminiSpeaking])
 
-  // Advance to next question when Gemini starts speaking again (second turn = Q2)
+  // Advance to next question on each Gemini turn after the first (turn 2 = Q2, turn 3 = Q3, etc.)
   useEffect(() => {
     if (isGeminiSpeaking && !prevGeminiSpeakingRef.current) {
       geminiTurnCountRef.current += 1
-      if (geminiTurnCountRef.current === 2 && plan.questions.length > 1) {
-        setCurrentQuestionIndex(1)
+      if (geminiTurnCountRef.current >= 2 && plan.questions.length > 1) {
+        setCurrentQuestionIndex(
+          Math.min(geminiTurnCountRef.current - 1, plan.questions.length - 1),
+        )
       }
     }
     prevGeminiSpeakingRef.current = isGeminiSpeaking
@@ -763,15 +767,32 @@ function ProcessingScreen() {
 // Results Screen
 function ResultsScreen({
   results,
+  transcript,
   onRetry,
 }: {
   results: AnalyzeOutput
+  transcript: string
   onRetry: () => void
 }) {
   const { coaching } = results
   const score = coaching.confidence_score
   const strengths = coaching.strengths
   const improvements = coaching.improvements
+
+  const [deepDives, setDeepDives] = useState<Record<number, DeepDiveOutput | null>>({})
+  const [deepDiveLoading, setDeepDiveLoading] = useState<Record<number, boolean>>({})
+
+  const handleDeepDive = async (weakness: string, index: number) => {
+    setDeepDiveLoading((prev) => ({ ...prev, [index]: true }))
+    try {
+      const result = await deepDiveInterview({ transcript, weakness })
+      setDeepDives((prev) => ({ ...prev, [index]: result }))
+    } catch {
+      /* silently fail — button remains clickable to retry */
+    } finally {
+      setDeepDiveLoading((prev) => ({ ...prev, [index]: false }))
+    }
+  }
 
   const handleRetry = () => {
     onRetry()
@@ -830,12 +851,43 @@ function ResultsScreen({
                 </div>
                 <button
                   type="button"
-                  className="self-start ml-8 text-xs font-medium text-primary hover:underline"
-                  disabled
-                  title="Deep Dive wiring comes in a later sprint"
+                  onClick={() => void handleDeepDive(item, i)}
+                  disabled={deepDiveLoading[i]}
+                  className="self-start ml-8 text-xs font-medium text-primary hover:underline disabled:opacity-50"
                 >
-                  Deep Dive (soon)
+                  {deepDiveLoading[i] ? "Loading…" : "Deep Dive →"}
                 </button>
+                {deepDives[i] && (
+                  <div className="ml-8 mt-3 bg-card border border-border rounded-xl p-5 space-y-4">
+                    <div>
+                      <p className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">
+                        Exercise
+                      </p>
+                      <p className="text-sm text-foreground">{deepDives[i].exercise}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">
+                        Tips
+                      </p>
+                      <ul className="space-y-1">
+                        {deepDives[i].tips.map((tip, j) => (
+                          <li key={j} className="text-sm text-muted-foreground flex gap-2">
+                            <span className="text-primary shrink-0">•</span>
+                            <span>{tip}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                    <div>
+                      <p className="text-xs font-semibold text-primary uppercase tracking-wider mb-1">
+                        Example Answer
+                      </p>
+                      <p className="text-sm text-muted-foreground leading-relaxed">
+                        {deepDives[i].example_answer}
+                      </p>
+                    </div>
+                  </div>
+                )}
               </li>
             ))}
           </ul>
@@ -860,6 +912,7 @@ export default function InterviewPilot() {
   const [activeView, setActiveView] = useState<ActiveView>("setup")
   const [plan, setPlan] = useState<PlanOutput | null>(null)
   const [results, setResults] = useState<AnalyzeOutput | null>(null)
+  const [transcript, setTranscript] = useState("")
   const [isStarting, setIsStarting] = useState(false)
   const [toastError, setToastError] = useState<string | null>(null)
 
@@ -888,6 +941,7 @@ export default function InterviewPilot() {
       return
     }
     setToastError(null)
+    setTranscript(payload.transcript)
     setActiveView("processing")
     try {
       const out = await analyzeInterview({
@@ -941,6 +995,7 @@ export default function InterviewPilot() {
       {activeView === "results" && results && (
         <ResultsScreen
           results={results}
+          transcript={transcript}
           onRetry={() => {
             setResults(null)
             setActiveView("interview")

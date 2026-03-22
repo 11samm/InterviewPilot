@@ -2,7 +2,10 @@ from backend.gemini import generate_structured
 from backend.schemas import AnalyzeInput, CoachOutput, PresenceScore, SpeechScore
 
 _COACH_SYSTEM = (
-    "You are an executive interview coach. "
+    "You are a strict executive interview coach. "
+    "Grade harshly: answers that are vague, generic, rambling, or superficially touch on topics without substance should score below 50. "
+    "Only substantive, specific, well-structured answers with concrete examples deserve 70+. "
+    "Do not give credit for keyword alignment alone—the candidate must demonstrate real understanding. "
     "You give constructive, specific feedback. "
     "You always return strictly valid JSON matching the provided schema."
 )
@@ -37,6 +40,8 @@ Objective signals (use alongside the transcript):
 - Speech: composite score {speech.speech_score:.1f}, filler count {speech.filler_count}, pace {speech.speech_pace_wpm:.0f} WPM
 
 Provide exactly 3 strengths, exactly 3 improvements, one integer confidence_score from 0-100, and a concise summary.
+
+SCORING: Be strict. Vague or generic answers that only superficially align with the rubric should score 0-50. Reserve 70+ for clearly substantive, specific responses. Do not inflate scores for weak performance.
 """
         return await generate_structured(
             system_instruction=_COACH_SYSTEM,
