@@ -143,6 +143,19 @@ function extractOutputTranscription(msg: unknown): string {
   return ot?.text ?? ""
 }
 
+function extractInputTranscription(msg: unknown): string {
+  if (!msg || typeof msg !== "object") return ""
+  const o = msg as Record<string, unknown>
+  const sc = (o.serverContent ?? o.server_content) as
+    | Record<string, unknown>
+    | undefined
+  if (!sc) return ""
+  const it = (sc.inputTranscription ?? sc.input_transcription) as
+    | { text?: string }
+    | undefined
+  return it?.text ?? ""
+}
+
 function collectEndInterviewCalls(
   root: unknown,
 ): { id: string; name: string }[] {
@@ -241,6 +254,8 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
 
   const [isConnected, setIsConnected] = useState(false)
   const [isGeminiSpeaking, setIsGeminiSpeaking] = useState(false)
+  const [userTranscript, setUserTranscript] = useState("")
+  const [geminiTranscript, setGeminiTranscript] = useState("")
 
   const wsRef = useRef<WebSocket | null>(null)
   const inputCtxRef = useRef<AudioContext | null>(null)
@@ -258,6 +273,7 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
   const setupWaitTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const inboundLogCountRef = useRef(0)
   const geminiTranscriptRef = useRef<string>("")
+  const userTranscriptRef = useRef("")
   const toolHandoffDelayRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const goodbyeAutoEndTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -327,6 +343,9 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
     captureStartRequestedRef.current = false
     inboundLogCountRef.current = 0
     geminiTranscriptRef.current = ""
+    userTranscriptRef.current = ""
+    setUserTranscript("")
+    setGeminiTranscript("")
     setIsConnected(false)
     setIsGeminiSpeaking(false)
     try {
@@ -688,7 +707,14 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
       const geminiText = extractOutputTranscription(msg)
       if (geminiText) {
         geminiTranscriptRef.current += geminiText + " "
+        setGeminiTranscript(geminiTranscriptRef.current.trim())
         liveLog("Gemini said:", geminiText)
+      }
+
+      const userText = extractInputTranscription(msg)
+      if (userText) {
+        userTranscriptRef.current += userText + " "
+        setUserTranscript(userTranscriptRef.current.trim())
       }
 
       const rawEndEarly = collectEndInterviewCalls(msg)
@@ -826,10 +852,18 @@ export function useLiveAPI(options: UseLiveAPIOptions) {
     }
   }, [handleEndInterview, teardownConnection])
 
+  const getUserTranscript = useCallback(
+    () => userTranscriptRef.current.trim(),
+    [],
+  )
+
   return {
     startSession,
     stopSession,
     isConnected,
     isGeminiSpeaking,
+    userTranscript,
+    getUserTranscript,
+    geminiTranscript,
   }
 }

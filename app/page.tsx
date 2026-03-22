@@ -10,7 +10,6 @@ import {
   type SetupInput,
 } from "@/app/lib/api"
 import { useLiveAPI } from "@/app/hooks/useLiveAPI"
-import { useSpeechRecognition } from "@/app/hooks/useSpeechRecognition"
 import {
   Briefcase,
   MessageSquare,
@@ -417,32 +416,44 @@ function InterviewScreen({
   const [isSubmitting, setIsSubmitting] = useState(false)   // waiting for onEnd
   const [elapsedSeconds, setElapsedSeconds] = useState(0)   // elapsed timer
   const [userSpeakingSeconds, setUserSpeakingSeconds] = useState(0)  // only ticks when user speaks (not AI)
+  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
 
   // ─── Refs ────────────────────────────────────────────────────────────────────
   const sessionStartRef = useRef<number>(0)
   const isEndingRef = useRef(false) // guard against double-submit
 
-  // ─── Speech Recognition ───────────────────────────────────────────────────────
+  // ─── Live API ─────────────────────────────────────────────────────────────────
   const {
-    startRecognition,
-    stopRecognition,
-    getTranscript,
-    liveTranscript,
-  } = useSpeechRecognition()
+    startSession,
+    stopSession,
+    isConnected,
+    isGeminiSpeaking,
+    userTranscript,
+    getUserTranscript,
+    geminiTranscript,
+  } = useLiveAPI({
+    apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY ?? "",
+    questions: plan.questions,
+    rubric: plan.rubric,
+    onInterviewComplete: () => {
+      void submitHandoff()
+    },
+    onError,
+  })
 
   // ─── Computed metrics from live transcript ───────────────────────────────────
   const FILLER_SET = new Set([
     "um", "uh", "like", "basically", "literally", "sort", "right", "okay", "yeah",
   ])
 
-  const fillerCount = liveTranscript
+  const fillerCount = userTranscript
     .toLowerCase()
     .split(/\s+/)
-    .filter((w) => FILLER_SET.has(w)).length
+    .filter((w) => FILLER_SET.has(w.replace(/[^a-z]/g, ""))).length
 
   const speechPaceWpm = (() => {
     if (userSpeakingSeconds < 5) return 0
-    const words = liveTranscript.trim().split(/\s+/).filter(Boolean).length
+    const words = userTranscript.trim().split(/\s+/).filter(Boolean).length
     return Math.round((words / userSpeakingSeconds) * 60)
   })()
 
@@ -454,8 +465,7 @@ function InterviewScreen({
     isEndingRef.current = true
     setIsSubmitting(true)
 
-    stopRecognition()
-    const transcript = getTranscript()
+    const transcript = getUserTranscript()
     const duration_seconds = sessionStartRef.current
       ? (Date.now() - sessionStartRef.current) / 1000
       : 0
@@ -468,19 +478,7 @@ function InterviewScreen({
       // onEnd / parent handles errors; isSubmitting stays true if we navigated away
       setIsSubmitting(false)
     }
-  }, [stopRecognition, getTranscript, onEnd])
-
-  // ─── Live API ─────────────────────────────────────────────────────────────────
-  const { startSession, stopSession, isConnected, isGeminiSpeaking } = useLiveAPI({
-    apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY ?? "",
-    questions: plan.questions,
-    rubric: plan.rubric,
-    onInterviewComplete: () => {
-      // Gemini called end_interview — WebSocket is already tearing down
-      void submitHandoff()
-    },
-    onError,
-  })
+  }, [getUserTranscript, onEnd])
 
   // ─── Side effects ─────────────────────────────────────────────────────────────
 
@@ -505,12 +503,14 @@ function InterviewScreen({
     return () => clearInterval(interval)
   }, [hasStarted, isConnected, isGeminiSpeaking])
 
-  // Start STT once Live API is connected (mic permission already granted by getUserMedia)
+  // Advance to Q2 when Gemini says it in the transcript
   useEffect(() => {
-    if (isConnected) {
-      startRecognition()
+    if (currentQuestionIndex >= 1 || !plan.questions[1]) return
+    const needle = plan.questions[1].slice(0, 30).toLowerCase()
+    if (geminiTranscript.toLowerCase().includes(needle)) {
+      setCurrentQuestionIndex(1)
     }
-  }, [isConnected, startRecognition])
+  }, [geminiTranscript, currentQuestionIndex, plan.questions])
 
   // ─── Handlers ────────────────────────────────────────────────────────────────
 
@@ -522,6 +522,7 @@ function InterviewScreen({
     sessionStartRef.current = 0
     setElapsedSeconds(0)
     setUserSpeakingSeconds(0)
+    setCurrentQuestionIndex(0)
     void startSession()
   }
 
@@ -600,19 +601,19 @@ function InterviewScreen({
             <div className="absolute bottom-6 left-6 right-6 space-y-3">
               <div className="backdrop-blur-xl bg-card/60 border border-border/50 rounded-xl p-6 shadow-xl">
                 <p className="text-lg text-foreground leading-relaxed text-balance">
-                  &ldquo;{plan.questions[0]}&rdquo;
+                  &ldquo;{plan.questions[currentQuestionIndex]}&rdquo;
                 </p>
-                {plan.questions[1] ? (
+                {plan.questions[currentQuestionIndex + 1] ? (
                   <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
-                    Next: &ldquo;{plan.questions[1]}&rdquo;
+                    Next: &ldquo;{plan.questions[currentQuestionIndex + 1]}&rdquo;
                   </p>
                 ) : null}
               </div>
 
               {/* Live transcript — only shown once connected and user has spoken */}
-              {isConnected && liveTranscript ? (
+              {isConnected && userTranscript ? (
                 <div className="backdrop-blur-sm bg-secondary/70 border border-border/30 rounded-lg px-4 py-2 max-h-16 overflow-y-auto">
-                  <p className="text-xs text-muted-foreground leading-relaxed">{liveTranscript}</p>
+                  <p className="text-xs text-muted-foreground leading-relaxed">{userTranscript}</p>
                 </div>
               ) : null}
             </div>
