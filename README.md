@@ -8,7 +8,7 @@ InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI inte
 
 [Watch Demo](https://www.youtube.com/watch?v=HSku0llR02w)
 
-- Note: Demo was recorded during a hackathon under time constraints and does not include system audio; the application supports full voice interaction.
+> Note: Demo was recorded during a hackathon under time constraints and does not include system audio; the application supports full voice interaction.
 ---
 
 ## ✨ Features
