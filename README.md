@@ -4,6 +4,11 @@
 
 InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI interviewer. While you speak, the app tracks your eye contact via webcam, counts your filler words, and measures your speaking pace — then grades your performance and generates targeted coaching the moment the session ends.
 
+## 🎥 Demo
+
+[Watch Demo](https://www.youtube.com/watch?v=HSku0llR02w)
+
+Note: Demo was recorded during a hackathon under time constraints and does not include system audio; the application supports full voice interaction.
 ---
 
 ## ✨ Features
