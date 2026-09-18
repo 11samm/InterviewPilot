@@ -23,3 +23,11 @@ backend/.env
 backend/__pycache__/
 backend/*.pyc
 .env.local
+# Runtime data and generated artifacts
+__pycache__/
+*.py[cod]
+*.tsbuildinfo
+backend/data/
+.pytest_cache/
+coverage/
+.cursor/*.log

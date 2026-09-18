@@ -1,105 +1,59 @@
 export interface SetupInput {
-  role: string
-  style: string
-  vibe: string
-  difficulty: string
-  num_questions?: number
+  role: string; style: string; vibe: string; difficulty: string; num_questions?: number
 }
-
-export interface PlanOutput {
-  questions: string[]
-  rubric: string
-}
-
-export interface FaceMetric {
-  timestamp: number
-  eye_contact: number
-  head_pitch: number
-  head_yaw: number
-}
-
+export interface PlanOutput { questions: string[]; rubric: string }
+export interface FaceMetric { timestamp: number; eye_contact: number; head_pitch: number; head_yaw: number }
+export interface AnswerInput { question_index: number; asked: boolean; text: string; speaking_seconds: number }
 export interface AnalyzeInput {
-  questions: string[]
-  rubric: string
-  transcript: string
-  duration_seconds: number
-  face_metrics: FaceMetric[]
+  interview_id: string; questions: string[]; rubric: string; answers: AnswerInput[]
+  duration_seconds: number; face_metrics: FaceMetric[]
 }
-
-export interface PresenceScore {
-  eye_contact_score: number
-  posture_score: number
-  presence_score: number
-}
-
+export interface PresenceScore { available: boolean; sample_count: number; eye_contact_score: number | null }
 export interface SpeechScore {
-  filler_count: number
-  filler_words: string[]
-  word_count: number
-  speech_pace_wpm: number
-  speech_score: number
+  filler_count: number; filler_words: string[]; word_count: number
+  speaking_seconds: number; speech_pace_wpm: number | null
 }
-
+export interface QuestionResult {
+  question_index: number; question: string; answer: string
+  status: "graded" | "unanswered" | "not_asked"; score: number | null; evidence: string; feedback: string
+}
 export interface CoachOutput {
-  strengths: string[]
-  improvements: string[]
-  confidence_score: number
-  summary: string
+  question_results: QuestionResult[]; overall_score: number | null
+  strengths: string[]; improvements: string[]; summary: string
 }
-
-export interface AnalyzeOutput {
-  presence: PresenceScore
-  speech: SpeechScore
-  coaching: CoachOutput
+export interface AnalyzeOutput { presence: PresenceScore; speech: SpeechScore; coaching: CoachOutput }
+export interface DeepDiveOutput { exercise: string; tips: string[]; example_answer: string }
+export interface InterviewSummary {
+  id: string; created_at: number; question_count: number
+  overall_score: number | null; status: "complete" | "pending"; speech: SpeechScore | null
 }
+export interface SavedInterview { id: string; created_at: number; payload: AnalyzeInput; result: AnalyzeOutput | null }
 
-export interface DeepDiveInput {
-  transcript: string
-  weakness: string
-}
-
-export interface DeepDiveOutput {
-  exercise: string
-  tips: string[]
-  example_answer: string
-}
-
-function apiBase(): string {
-  const raw = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"
-  return raw.replace(/\/$/, "")
-}
-
-function errorMessageFromBody(text: string, status: number, statusText: string): string {
-  try {
-    const j = JSON.parse(text) as { detail?: unknown }
-    if (typeof j.detail === "string") return j.detail
-  } catch {
-    /* use raw text */
-  }
-  return text || `${status} ${statusText}`
-}
-
-async function postJson<TResponse>(path: string, body: unknown): Promise<TResponse> {
-  const res = await fetch(`${apiBase()}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
+export async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
+  const response = await fetch("/api" + path, {
+    method, credentials: "same-origin",
+    headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal: AbortSignal.timeout(120_000),
   })
-  if (!res.ok) {
-    const text = await res.text()
-    throw new Error(errorMessageFromBody(text, res.status, res.statusText))
+  if (!response.ok) {
+    let message = `Request failed (${response.status}). Please retry.`
+    try {
+      const error = await response.json()
+      if (typeof error.detail === "string") message = error.detail
+      else if (Array.isArray(error.detail)) message = "Some interview data is invalid. Please check the recording and retry."
+    } catch { /* Non-JSON proxy error: preserve a useful status without exposing an HTML page. */ }
+    throw new Error(message)
   }
-  return res.json() as Promise<TResponse>
+  return response.status === 204 ? undefined as T : response.json()
 }
-
-export async function planInterview(input: SetupInput): Promise<PlanOutput> {
-  return postJson<PlanOutput>("/api/plan", input)
-}
-
-export async function analyzeInterview(input: AnalyzeInput): Promise<AnalyzeOutput> {
-  return postJson<AnalyzeOutput>("/api/analyze", input)
-}
-
-export async function deepDiveInterview(input: DeepDiveInput): Promise<DeepDiveOutput> {
-  return postJson<DeepDiveOutput>("/api/deepdive", input)
-}
+export const sessionStatus = () => request<{ authenticated: boolean; access_code_required: boolean }>("/session")
+export const openSession = (access_code = "") => request("/session", "POST", { access_code })
+export const planInterview = (input: SetupInput) => request<PlanOutput>("/plan", "POST", input)
+export const analyzeInterview = (input: AnalyzeInput) => request<AnalyzeOutput>("/analyze", "POST", input)
+export const deepDiveInterview = (input: { transcript: string; weakness: string }) => request<DeepDiveOutput>("/deepdive", "POST", input)
+export const getLiveToken = () => request<{ token: string; model: string }>("/live-token", "POST")
+export const listInterviews = () => request<InterviewSummary[]>("/interviews")
+export const getInterview = (id: string) => request<SavedInterview>(`/interviews/${id}`)
+export const saveDraft = (input: AnalyzeInput) => request(`/interviews/${input.interview_id}`, "PUT", input)
+export const deleteInterview = (id: string) => request(`/interviews/${id}`, "DELETE")

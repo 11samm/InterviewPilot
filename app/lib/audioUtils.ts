@@ -72,7 +72,7 @@ export function playPcm16(
   sampleRate: number,
   ctx: AudioContext,
   nextPlayTimeRef: { current: number },
-): void {
+): AudioBufferSourceNode {
   const float32 = new Float32Array(data.length)
   for (let i = 0; i < data.length; i++) {
     float32[i] = data[i]! / 32768
@@ -85,6 +85,7 @@ export function playPcm16(
   const startAt = Math.max(ctx.currentTime, nextPlayTimeRef.current)
   src.start(startAt)
   nextPlayTimeRef.current = startAt + buffer.duration
+  return src
 }
 
 export function parsePcmMimeRate(mimeType: string | undefined): number {

@@ -1,6 +1,6 @@
 "use client"
 
-import { useCallback, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   FaceLandmarker,
   FilesetResolver,
@@ -13,7 +13,7 @@ const FACE_LANDMARKER_MODEL =
   "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
 
 const WASM_BASE =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@latest/wasm"
+  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.33/wasm"
 
 /** MediaPipe 478-point face mesh indices (see MediaPipe docs) */
 const NOSE_TIP = 4
@@ -36,7 +36,7 @@ function computeMetricsFromLandmarks(landmarks: NormalizedLandmark[]): {
   head_yaw: number
 } {
   if (landmarks.length < 478) {
-    return { eye_contact: 0.5, head_pitch: 0, head_yaw: 0 }
+    throw new Error("Incomplete face landmarks")
   }
 
   const get = (i: number) => landmarks[i]!
@@ -75,7 +75,7 @@ function computeMetricsFromLandmarks(landmarks: NormalizedLandmark[]): {
 
 export interface UseFaceTrackerReturn {
   videoRef: React.RefObject<HTMLVideoElement | null>
-  eyeContactScore: number
+  eyeContactScore: number | null
   getFaceMetrics: () => FaceMetric[]
   startTracking: () => Promise<void>
   stopTracking: () => void
@@ -83,10 +83,11 @@ export interface UseFaceTrackerReturn {
 
 export function useFaceTracker(): UseFaceTrackerReturn {
   const videoRef = useRef<HTMLVideoElement | null>(null)
-  const [eyeContactScore, setEyeContactScore] = useState(0)
+  const [eyeContactScore, setEyeContactScore] = useState<number | null>(null)
   const faceLandmarkerRef = useRef<FaceLandmarker | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const rafRef = useRef<number | null>(null)
+  const generationRef = useRef(0)
   const metricsRef = useRef<FaceMetric[]>([])
   const recentScoresRef = useRef<number[]>([])
   const lastVideoTimeRef = useRef<number>(-1)
@@ -100,6 +101,7 @@ export function useFaceTracker(): UseFaceTrackerReturn {
   }, [])
 
   const stopTracking = useCallback(() => {
+    generationRef.current += 1
     if (rafRef.current != null) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
@@ -108,11 +110,18 @@ export function useFaceTracker(): UseFaceTrackerReturn {
     streamRef.current = null
     faceLandmarkerRef.current?.close()
     faceLandmarkerRef.current = null
-    setEyeContactScore(0)
+    if (videoRef.current) videoRef.current.srcObject = null
+    setEyeContactScore(null)
   }, [])
+
+  useEffect(() => () => stopTracking(), [stopTracking])
 
   const startTracking = useCallback(async () => {
     stopTracking()
+    const generation = generationRef.current
+    const stale = () => generation !== generationRef.current
+    lastMetricPushRef.current = 0
+    lastInferenceRef.current = 0
     metricsRef.current = []
     recentScoresRef.current = []
     lastVideoTimeRef.current = -1
@@ -121,20 +130,26 @@ export function useFaceTracker(): UseFaceTrackerReturn {
     const video = videoRef.current
     if (!video) return
 
+    try {
     const stream = await navigator.mediaDevices.getUserMedia({ video: true })
+    if (stale()) { stream.getTracks().forEach((track) => track.stop()); return }
     streamRef.current = stream
     video.srcObject = stream
     await video.play()
 
+    if (stale()) return
     const vision = await FilesetResolver.forVisionTasks(WASM_BASE)
+    if (stale()) return
     const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: FACE_LANDMARKER_MODEL },
       runningMode: "VIDEO",
       numFaces: 1,
     })
+    if (stale()) { faceLandmarker.close(); return }
     faceLandmarkerRef.current = faceLandmarker
 
     const runDetection = () => {
+      if (stale()) return
       const v = videoRef.current
       const fl = faceLandmarkerRef.current
       if (!v || !fl || v.readyState < 2) {
@@ -174,6 +189,9 @@ export function useFaceTracker(): UseFaceTrackerReturn {
               recentScoresRef.current.reduce((a, b) => a + b, 0) /
               Math.max(1, recentScoresRef.current.length)
             setEyeContactScore(avg)
+          } else {
+            recentScoresRef.current = []
+            setEyeContactScore(null)
           }
         } catch {
           /* ignore single-frame errors */
@@ -182,6 +200,9 @@ export function useFaceTracker(): UseFaceTrackerReturn {
       rafRef.current = requestAnimationFrame(runDetection)
     }
     rafRef.current = requestAnimationFrame(runDetection)
+    } catch (error) {
+      if (!stale()) { stopTracking(); throw error }
+    }
   }, [stopTracking])
 
   return {

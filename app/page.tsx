@@ -6,11 +6,16 @@ import {
   analyzeInterview,
   deepDiveInterview,
   type AnalyzeOutput,
+  type AnalyzeInput,
+  type InterviewSummary,
+  sessionStatus, openSession, listInterviews, getInterview, deleteInterview, saveDraft,
   type DeepDiveOutput,
   type FaceMetric,
   type PlanOutput,
   type SetupInput,
 } from "@/app/lib/api"
+import { speechMetrics } from "@/app/lib/speechMetrics"
+import { InterviewHistory } from "@/app/components/InterviewHistory"
 import { useFaceTracker } from "@/app/hooks/useFaceTracker"
 import { useLiveAPI } from "@/app/hooks/useLiveAPI"
 import {
@@ -28,7 +33,7 @@ import {
   Plane,
 } from "lucide-react"
 
-type ActiveView = "setup" | "interview" | "processing" | "results"
+type ActiveView = "setup" | "interview" | "processing" | "results" | "review"
 
 interface SelectOption {
   value: string
@@ -400,363 +405,107 @@ function SetupScreen({
 }
 
 // Interview Screen (Live HUD)
-function InterviewScreen({
-  plan,
-  onEnd,
-  onError,
-}: {
+function InterviewScreen({ plan, onEnd, onError }: {
   plan: PlanOutput
-  onEnd: (payload: {
-    transcript: string
-    duration_seconds: number
-    face_metrics: FaceMetric[]
-  }) => void | Promise<void>
+  onEnd: (payload: AnalyzeInput) => void | Promise<void>
   onError: (message: string) => void
 }) {
-  // ─── State ────────────────────────────────────────────────────────────────────
-  const [hasStarted, setHasStarted] = useState(false)       // user clicked "Start"
-  const [isSubmitting, setIsSubmitting] = useState(false)   // waiting for onEnd
-  const [elapsedSeconds, setElapsedSeconds] = useState(0)   // elapsed timer
-  const [userSpeakingSeconds, setUserSpeakingSeconds] = useState(0)  // only ticks when user speaks (not AI)
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0)
-
-  // ─── Refs ────────────────────────────────────────────────────────────────────
-  const sessionStartRef = useRef<number>(0)
-  const isEndingRef = useRef(false) // guard against double-submit
-  const geminiTurnCountRef = useRef(0)
-  const prevGeminiSpeakingRef = useRef(false)
-
-  // ─── Live API ─────────────────────────────────────────────────────────────────
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [elapsedSeconds, setElapsedSeconds] = useState(0)
+  const interviewId = useRef(crypto.randomUUID())
+  const ending = useRef(false)
   const {
-    startSession,
-    stopSession,
-    isConnected,
-    isGeminiSpeaking,
-    userTranscript,
-    getUserTranscript,
-    geminiTranscript,
+    startSession, stopSession, isConnected, isConnecting, isGeminiSpeaking,
+    userTranscript, userSpeakingSeconds, currentQuestionIndex, getRecording,
   } = useLiveAPI({
-    apiKey: process.env.NEXT_PUBLIC_GEMINI_API_KEY ?? "",
-    questions: plan.questions,
-    rubric: plan.rubric,
-    onInterviewComplete: () => {
-      void submitHandoff()
-    },
+    questions: plan.questions, rubric: plan.rubric,
+    onInterviewComplete: () => { void submitHandoff() },
     onError,
   })
+  const { videoRef, eyeContactScore, getFaceMetrics, startTracking, stopTracking } = useFaceTracker()
+  const metrics = speechMetrics(userTranscript, userSpeakingSeconds)
 
-  const { videoRef, eyeContactScore, getFaceMetrics, startTracking, stopTracking } =
-    useFaceTracker()
-
-  // ─── Computed metrics from live transcript ───────────────────────────────────
-  const FILLER_SET = new Set([
-    "um", "uh", "like", "basically", "literally", "sort", "right", "okay", "yeah",
-  ])
-
-  const fillerCount = userTranscript
-    .toLowerCase()
-    .split(/\s+/)
-    .filter((w) => FILLER_SET.has(w.replace(/[^a-z]/g, ""))).length
-
-  const speechPaceWpm = (() => {
-    if (userSpeakingSeconds < 5) return 0
-    const words = userTranscript.trim().split(/\s+/).filter(Boolean).length
-    return Math.round((words / userSpeakingSeconds) * 60)
-  })()
-
-  // ─── Handoff: collect data and call onEnd ────────────────────────────────────
-  // Called by Gemini's end_interview tool and the floating Complete / End Early actions.
-  // isEndingRef prevents double-submission if both fire simultaneously.
   const submitHandoff = useCallback(async () => {
-    if (isEndingRef.current) return
-    isEndingRef.current = true
+    if (ending.current) return
+    ending.current = true
     setIsSubmitting(true)
-
-    const transcript = getUserTranscript()
-    const duration_seconds = sessionStartRef.current
-      ? (Date.now() - sessionStartRef.current) / 1000
-      : 0
+    stopSession()
     stopTracking()
-    const face_metrics = getFaceMetrics()
+    const snapshot = getRecording()
+    await onEnd({
+      interview_id: interviewId.current, ...plan, ...snapshot, face_metrics: getFaceMetrics(),
+    })
+  }, [getRecording, getFaceMetrics, onEnd, plan, stopSession, stopTracking])
 
-    try {
-      await onEnd({ transcript, duration_seconds, face_metrics })
-    } catch {
-      // onEnd / parent handles errors; isSubmitting stays true if we navigated away
-      setIsSubmitting(false)
-    }
-  }, [getUserTranscript, onEnd, stopTracking, getFaceMetrics])
-
-  // ─── Side effects ─────────────────────────────────────────────────────────────
-
-  // Start elapsed timer once Live API is connected
   useEffect(() => {
     if (!isConnected) return
-    if (sessionStartRef.current === 0) {
-      sessionStartRef.current = Date.now()
-    }
-    const interval = setInterval(() => {
-      setElapsedSeconds(Math.round((Date.now() - sessionStartRef.current) / 1000))
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [isConnected])
+    const timer = setInterval(() => setElapsedSeconds(Math.floor(getRecording().duration_seconds)), 500)
+    return () => clearInterval(timer)
+  }, [isConnected, getRecording])
 
-  // User-speaking timer: only ticks when user is speaking (not when Gemini is)
-  useEffect(() => {
-    if (!hasStarted || !isConnected || isGeminiSpeaking) return
-    const interval = setInterval(() => {
-      setUserSpeakingSeconds((prev) => prev + 1)
-    }, 1000)
-    return () => clearInterval(interval)
-  }, [hasStarted, isConnected, isGeminiSpeaking])
-
-  // Advance to next question on each Gemini turn after the first (turn 2 = Q2, turn 3 = Q3, etc.)
-  useEffect(() => {
-    if (isGeminiSpeaking && !prevGeminiSpeakingRef.current) {
-      geminiTurnCountRef.current += 1
-      if (geminiTurnCountRef.current >= 2 && plan.questions.length > 1) {
-        setCurrentQuestionIndex(
-          Math.min(geminiTurnCountRef.current - 1, plan.questions.length - 1),
-        )
-      }
-    }
-    prevGeminiSpeakingRef.current = isGeminiSpeaking
-  }, [isGeminiSpeaking, plan.questions.length])
-
-  // ─── Handlers ────────────────────────────────────────────────────────────────
-
-  // Called from "Start Live Session" button — must remain a synchronous click handler
-  // so AudioContext creation inside startSession() happens within the user gesture.
-  const handleStartSession = () => {
-    setHasStarted(true)
-    isEndingRef.current = false
-    sessionStartRef.current = 0
+  const start = () => {
+    ending.current = false
+    setIsSubmitting(false)
     setElapsedSeconds(0)
-    setUserSpeakingSeconds(0)
-    setCurrentQuestionIndex(0)
-    geminiTurnCountRef.current = 0
-    prevGeminiSpeakingRef.current = false
-    void startTracking()
+    interviewId.current = crypto.randomUUID()
+    void startTracking().catch(() => onError("Camera tracking is unavailable. You can continue with voice only."))
     void startSession()
   }
-
-  // Emergency exit — user terminates before Gemini fires end_interview
-  const handleEndEarly = () => {
-    stopSession()     // closes WebSocket; does NOT call onInterviewComplete
-    void submitHandoff() // manually trigger the handoff
-  }
-
-  // ─── Helpers ─────────────────────────────────────────────────────────────────
-  const formatTime = (s: number) => {
-    const m = Math.floor(s / 60)
-    const sec = s % 60
-    return `${m.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`
-  }
-
-  // Status badge config
-  type BadgeConfig = { label: string; dotClass: string; textClass: string }
-  const badge: BadgeConfig | null = !hasStarted
-    ? null
-    : !isConnected
-    ? { label: "Connecting…", dotClass: "bg-yellow-400", textClass: "text-yellow-400" }
-    : isGeminiSpeaking
-    ? { label: "AI Speaking", dotClass: "bg-blue-400", textClass: "text-blue-400" }
-    : { label: "Your Turn", dotClass: "bg-green-400", textClass: "text-green-400" }
-
-  // ─── Render ──────────────────────────────────────────────────────────────────
+  const hasRecording = currentQuestionIndex >= 0 || Boolean(userTranscript)
   return (
-    <div className="min-h-screen flex flex-col bg-background">
-      {/* Top Bar */}
-      <header className="flex items-center justify-between px-6 py-4 border-b border-border">
-        <div className="flex items-center gap-2">
-          <Plane className="h-5 w-5 text-primary" />
-          <span className="font-semibold text-foreground">InterviewPilot</span>
-        </div>
-        <div className="flex items-center gap-3">
-          {badge ? (
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-3 w-3">
-                <span
-                  className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${badge.dotClass}`}
-                />
-                <span className={`relative inline-flex rounded-full h-3 w-3 ${badge.dotClass}`} />
-              </span>
-              <span className={`text-sm font-medium ${badge.textClass}`}>{badge.label}</span>
-            </div>
-          ) : null}
-          <div className="px-3 py-1 bg-secondary rounded-lg text-foreground font-mono text-sm">
-            {formatTime(elapsedSeconds)}
-          </div>
-        </div>
+    <section className="min-h-screen p-6 space-y-6">
+      <header className="flex justify-between items-center">
+        <span className="font-semibold">InterviewPilot</span>
+        <span className="text-sm text-muted-foreground">
+          {isConnecting ? "Connecting…" : isConnected ? isGeminiSpeaking ? "Interviewer speaking" : "Listening" : "Session stopped"}
+          {" · "}{Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
+        </span>
       </header>
-
-      {/* Main Content */}
-      <div className="flex-1 flex p-6 gap-6">
-        {/* Main Stage */}
-        <div className="flex-1 lg:w-[70%] relative">
-          <div className="w-full h-full min-h-[400px] bg-card rounded-xl border border-border relative overflow-hidden shadow-[0_0_60px_rgba(147,51,234,0.1)]">
-            <video
-              ref={videoRef}
-              autoPlay
-              muted
-              playsInline
-              className="absolute inset-0 w-full h-full object-cover"
-            />
-
-            {/* Gemini speaking pulse overlay */}
-            {isGeminiSpeaking && (
-              <div className="absolute top-4 right-4 flex items-center gap-2 bg-blue-500/20 border border-blue-400/30 rounded-full px-3 py-1">
-                <span className="relative flex h-2 w-2">
-                  <span className="animate-ping absolute h-full w-full rounded-full bg-blue-400 opacity-75" />
-                  <span className="relative h-2 w-2 rounded-full bg-blue-400" />
-                </span>
-                <span className="text-xs text-blue-400 font-medium">AI Speaking</span>
-              </div>
-            )}
-
-            {/* Question Overlay */}
-            <div className="absolute bottom-6 left-6 right-6 space-y-3">
-              <div className="backdrop-blur-xl bg-card/60 border border-border/50 rounded-xl p-6 shadow-xl">
-                <p className="text-lg text-foreground leading-relaxed text-balance">
-                  &ldquo;{plan.questions[currentQuestionIndex]}&rdquo;
-                </p>
-                {plan.questions[currentQuestionIndex + 1] ? (
-                  <p className="text-sm text-muted-foreground mt-3 leading-relaxed">
-                    Next: &ldquo;{plan.questions[currentQuestionIndex + 1]}&rdquo;
-                  </p>
-                ) : null}
-              </div>
-
-              {/* Live transcript — only shown once connected and user has spoken */}
-              {isConnected && userTranscript ? (
-                <div className="backdrop-blur-sm bg-secondary/70 border border-border/30 rounded-lg px-4 py-2 max-h-16 overflow-y-auto">
-                  <p className="text-xs text-muted-foreground leading-relaxed">{userTranscript}</p>
-                </div>
-              ) : null}
-            </div>
-
-            {/* Pre-start overlay — blocks HUD until user clicks to grant mic */}
-            {!hasStarted ? (
-              <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/70 backdrop-blur-md z-10 gap-4">
-                <p className="text-muted-foreground text-sm">
-                  Your microphone will be activated when you click start.
-                </p>
-                <button
-                  type="button"
-                  onClick={handleStartSession}
-                  className="flex items-center gap-2 px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/50"
-                >
-                  <Mic className="h-5 w-5" />
-                  Start Live Session
-                </button>
-              </div>
-            ) : null}
+      <div className="grid gap-6 lg:grid-cols-[1fr_280px]">
+        <div className="relative min-h-[420px] rounded-xl overflow-hidden border border-border bg-card">
+          <video ref={videoRef} autoPlay muted playsInline className="absolute inset-0 w-full h-full object-cover" />
+          <div className="absolute bottom-4 left-4 right-4 rounded-xl bg-background/90 p-5 space-y-3">
+            <p className="text-xs text-muted-foreground">
+              {currentQuestionIndex >= 0 ? `Question ${currentQuestionIndex + 1} of ${plan.questions.length}` : "Waiting for the first question"}
+            </p>
+            <p className="text-lg">{currentQuestionIndex >= 0 ? plan.questions[currentQuestionIndex] : "Start when you are ready."}</p>
+            {userTranscript && <p className="max-h-28 overflow-auto text-sm text-muted-foreground">{userTranscript}</p>}
           </div>
         </div>
-
-        {/* Metrics Sidebar */}
-        <div className="w-full lg:w-[30%] max-w-xs space-y-4">
-          <h3 className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
-            Live Metrics
-          </h3>
-
-          {/* Filler Words — real count from transcript */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/20 rounded-lg">
-                <Mic className="h-4 w-4 text-primary" />
-              </div>
-              <span className="text-sm text-muted-foreground">Filler Words</span>
-            </div>
-            <p className="text-2xl font-bold text-foreground">
-              Ums/Ahs:{" "}
-              <span className={fillerCount > 5 ? "text-destructive" : "text-primary"}>
-                {fillerCount}
-              </span>
-            </p>
+        <aside className="space-y-4">
+          <h2 className="font-semibold">Live metrics</h2>
+          <div className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm text-muted-foreground">Possible fillers</p>
+            <p className="text-2xl font-bold">{metrics.filler_count}</p>
           </div>
-
-          {/* Eye Contact — live from MediaPipe FaceLandmarker */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-accent/20 rounded-lg">
-                <Eye className="h-4 w-4 text-accent" />
-              </div>
-              <span className="text-sm text-muted-foreground">Eye Contact</span>
-            </div>
-            <p className="text-2xl font-bold text-foreground">
-              {hasStarted && isConnected ? (
-                <span
-                  className={
-                    eyeContactScore > 0.6 ? "text-accent" : "text-destructive"
-                  }
-                >
-                  {Math.round(eyeContactScore * 100)}%
-                </span>
-              ) : (
-                <span className="text-accent">—</span>
-              )}
-            </p>
+          <div className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm text-muted-foreground">Estimated speaking pace</p>
+            <p className="text-2xl font-bold">{metrics.speech_pace_wpm ?? "—"} <span className="text-sm">WPM</span></p>
+            <p className="text-xs text-muted-foreground">{userSpeakingSeconds.toFixed(1)} seconds of detected voice; at least 5 seconds needed.</p>
           </div>
-
-          {/* Speech Pace — derived from transcript / user speaking time; waits for 5s first */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-2">
-            <div className="flex items-center gap-3">
-              <div className="p-2 bg-primary/20 rounded-lg">
-                <Activity className="h-4 w-4 text-primary" />
-              </div>
-              <span className="text-sm text-muted-foreground">Speech Pace</span>
-            </div>
-            <p className="text-2xl font-bold text-foreground">
-              {speechPaceWpm > 0 ? (
-                <>
-                  <span className="text-primary">{speechPaceWpm}</span>
-                  <span className="text-sm font-normal text-muted-foreground"> WPM</span>
-                </>
-              ) : hasStarted && isConnected ? (
-                <span className="text-sm font-normal text-muted-foreground">
-                  Measuring… {userSpeakingSeconds}/5 sec
-                </span>
-              ) : (
-                <span className="text-primary">—</span>
-              )}
-            </p>
+          <div className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm text-muted-foreground">Camera gaze estimate</p>
+            <p className="text-2xl font-bold">{eyeContactScore === null ? "Unavailable" : `${Math.round(eyeContactScore * 100)}%`}</p>
+            <p className="text-xs text-muted-foreground">Optional coaching signal; excluded from content grading.</p>
           </div>
-        </div>
+        </aside>
       </div>
-
-      {hasStarted && isConnected && !isSubmitting ? (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 flex gap-3">
-          <button
-            type="button"
-            onClick={() => {
-              stopSession()
-              void submitHandoff()
-            }}
-            className="px-6 py-3 bg-secondary border border-border text-foreground font-medium rounded-full hover:border-primary/50 transition-all"
-          >
-            Complete Interview
+      <div className="flex flex-wrap justify-center gap-4">
+        {!isConnected && !isConnecting && !hasRecording && (
+          <button onClick={start} className="rounded-xl bg-primary px-6 py-3 text-primary-foreground">Start Live Session</button>
+        )}
+        {isConnecting && <button onClick={() => { stopSession(); stopTracking() }} className="rounded-xl border px-6 py-3">Cancel connection</button>}
+        {hasRecording && !isSubmitting && (
+          <button onClick={() => void submitHandoff()} className="rounded-xl bg-primary px-6 py-3 text-primary-foreground">
+            {isConnected ? "Finish and analyze" : "Save recording and analyze"}
           </button>
-          <button
-            type="button"
-            onClick={handleEndEarly}
-            className="px-8 py-3 bg-destructive text-destructive-foreground font-semibold rounded-full hover:shadow-[0_0_20px_rgba(239,68,68,0.4)] transition-all flex items-center gap-2"
-          >
-            <span className="h-2 w-2 bg-white rounded-full" />
-            End Early
-          </button>
-        </div>
-      ) : null}
-
-      {isSubmitting ? (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2">
-          <div className="px-8 py-3 bg-secondary text-muted-foreground font-semibold rounded-full flex items-center gap-2">
-            <div className="h-4 w-4 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-            Submitting…
-          </div>
-        </div>
-      ) : null}
-    </div>
+        )}
+        {isSubmitting && <p role="status">Saving your recording…</p>}
+      </div>
+      <p className="text-center text-sm text-muted-foreground">
+        Microphone audio is sent to Gemini. Camera images stay in your browser. Transcripts and reports are saved on the app server.
+      </p>
+    </section>
   )
 }
 
@@ -791,20 +540,22 @@ function ResultsScreen({
   onRetry: () => void
 }) {
   const { coaching } = results
-  const score = coaching.confidence_score
+  const score = coaching.overall_score
   const strengths = coaching.strengths
   const improvements = coaching.improvements
 
+  const [drillError, setDrillError] = useState<string | null>(null)
   const [deepDives, setDeepDives] = useState<Record<number, DeepDiveOutput | null>>({})
   const [deepDiveLoading, setDeepDiveLoading] = useState<Record<number, boolean>>({})
 
   const handleDeepDive = async (weakness: string, index: number) => {
+    setDrillError(null)
     setDeepDiveLoading((prev) => ({ ...prev, [index]: true }))
     try {
       const result = await deepDiveInterview({ transcript, weakness })
       setDeepDives((prev) => ({ ...prev, [index]: result }))
-    } catch {
-      /* silently fail — button remains clickable to retry */
+    } catch (error) {
+      setDrillError(error instanceof Error ? error.message : "Could not load the drill. Please retry.")
     } finally {
       setDeepDiveLoading((prev) => ({ ...prev, [index]: false }))
     }
@@ -819,11 +570,11 @@ function ResultsScreen({
       {/* Score */}
       <div className="text-center mb-12">
         <p className="text-sm text-muted-foreground uppercase tracking-wider mb-2">
-          Confidence Score
+          Interview content score
         </p>
         <div className="relative">
           <span className="text-8xl font-bold bg-gradient-to-r from-primary to-accent bg-clip-text text-transparent">
-            {score}
+            {score ?? "—"}
           </span>
           <span className="text-3xl text-muted-foreground">/100</span>
         </div>
@@ -834,6 +585,32 @@ function ResultsScreen({
         ) : null}
       </div>
 
+      <section className="w-full max-w-4xl mb-8 space-y-4">
+        <p className="text-sm text-muted-foreground">
+          Content score is the mean of asked-question scores. Asked questions with no captured answer count as zero;
+          questions not reached are excluded. Speech and camera estimates do not affect this score.
+        </p>
+        <div className="grid gap-4 sm:grid-cols-3">
+          <div className="rounded-xl border p-4"><p>Possible fillers</p><strong className="text-2xl">{results.speech.filler_count}</strong>
+            <p className="text-xs text-muted-foreground">{results.speech.filler_words.join(", ") || "None detected in the transcript"}</p></div>
+          <div className="rounded-xl border p-4"><p>Estimated pace</p><strong className="text-2xl">{results.speech.speech_pace_wpm ?? "Unavailable"}</strong>
+            <p className="text-xs text-muted-foreground">WPM · {results.speech.word_count} words · {results.speech.speaking_seconds.toFixed(1)} voice seconds</p></div>
+          <div className="rounded-xl border p-4"><p>Camera gaze estimate</p><strong className="text-2xl">
+            {results.presence.eye_contact_score === null ? "Unavailable" : `${Math.round(results.presence.eye_contact_score * 100)}%`}</strong>
+            <p className="text-xs text-muted-foreground">{results.presence.sample_count} samples; approximate camera alignment</p></div>
+        </div>
+        <p className="text-xs text-muted-foreground">Pace uses microphone energy to estimate speaking time. Transcription may omit fillers; background noise may affect timing.</p>
+        <h2 className="text-xl font-semibold">Question feedback</h2>
+        {coaching.question_results.map((question) => <article key={question.question_index} className="rounded-xl border p-5 space-y-3">
+          <h3 className="font-semibold">{question.question_index + 1}. {question.question}</h3>
+          <p className="text-primary">{question.score === null ? "Not reached" : `${question.score}/100`}</p>
+          {question.evidence && <blockquote className="border-l-2 border-primary pl-3 text-muted-foreground">“{question.evidence}”</blockquote>}
+          <p>{question.feedback}</p>
+          <details><summary className="cursor-pointer text-sm text-muted-foreground">Captured answer</summary><p className="mt-2 text-sm">{question.answer || "No answer captured."}</p></details>
+        </article>)}
+      </section>
+
+      {drillError && <p role="alert" className="mb-4 text-destructive">{drillError}</p>}
       {/* Feedback Grid */}
       <div className="w-full max-w-4xl grid md:grid-cols-2 gap-6 mb-12">
         {/* Strengths */}
@@ -917,7 +694,7 @@ function ResultsScreen({
         className="px-8 py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 flex items-center gap-2"
       >
         <RotateCcw className="h-5 w-5" />
-        Retry Question
+        Start another interview
       </button>
     </div>
   )
@@ -929,94 +706,133 @@ export default function InterviewPilot() {
   const [plan, setPlan] = useState<PlanOutput | null>(null)
   const [results, setResults] = useState<AnalyzeOutput | null>(null)
   const [transcript, setTranscript] = useState("")
+  const [pending, setPending] = useState<AnalyzeInput | null>(null)
+  const [history, setHistory] = useState<InterviewSummary[]>([])
   const [isStarting, setIsStarting] = useState(false)
   const [toastError, setToastError] = useState<string | null>(null)
+  const [ready, setReady] = useState(false)
+  const [accessRequired, setAccessRequired] = useState(false)
+  const [accessCode, setAccessCode] = useState("")
+  const [connecting, setConnecting] = useState(false)
+
+  const refreshHistory = useCallback(async () => { setHistory(await listInterviews()) }, [])
+  const initialize = useCallback(async (code?: string) => {
+    setConnecting(true)
+    setToastError(null)
+    try {
+      const status = await sessionStatus()
+      if (!status.authenticated) {
+        if (status.access_code_required && code === undefined) { setAccessRequired(true); return }
+        await openSession(code)
+      }
+      setReady(true)
+      setAccessRequired(false)
+      await refreshHistory()
+      try {
+        const value = sessionStorage.getItem("interviewpilot.pending.v1")
+        if (value) {
+          const draft = JSON.parse(value)
+          if (draft.interview_id && Array.isArray(draft.answers) && Array.isArray(draft.questions)) {
+            setPending(draft)
+            setActiveView("review")
+          }
+        }
+      } catch { /* Server history remains available when browser storage is disabled. */ }
+    } catch (e) { setToastError(e instanceof Error ? e.message : "Could not connect to the backend.") }
+    finally { setConnecting(false) }
+  }, [refreshHistory])
+  useEffect(() => { void initialize() }, [initialize])
 
   const handleSetupStart = async (setup: SetupInput) => {
     setToastError(null)
     setIsStarting(true)
     try {
-      const nextPlan = await planInterview(setup)
-      setPlan(nextPlan)
+      setPlan(await planInterview(setup))
       setResults(null)
       setActiveView("interview")
-    } catch (e) {
-      setToastError(e instanceof Error ? e.message : "Could not start interview")
-    } finally {
-      setIsStarting(false)
-    }
+    } catch (e) { setToastError(e instanceof Error ? e.message : "Could not create the interview.") }
+    finally { setIsStarting(false) }
   }
-
-  const handleInterviewEnd = async (payload: {
-    transcript: string
-    duration_seconds: number
-    face_metrics: FaceMetric[]
-  }) => {
-    if (!plan) {
-      setToastError("No interview plan loaded.")
-      return
-    }
+  const analyze = async (payload: AnalyzeInput) => {
+    setPending(payload)
+    setTranscript(payload.answers.map((a) => a.text).join(" "))
+    try { sessionStorage.setItem("interviewpilot.pending.v1", JSON.stringify(payload)) } catch { /* Best-effort offline recovery. */ }
     setToastError(null)
-    setTranscript(payload.transcript)
     setActiveView("processing")
     try {
-      const out = await analyzeInterview({
-        questions: plan.questions,
-        rubric: plan.rubric,
-        transcript: payload.transcript,
-        duration_seconds: payload.duration_seconds,
-        face_metrics: payload.face_metrics,
-      })
+      await saveDraft(payload)
+      const out = await analyzeInterview(payload)
       setResults(out)
       setActiveView("results")
+      setPending(null)
+      try { sessionStorage.removeItem("interviewpilot.pending.v1") } catch { /* no-op */ }
+      await refreshHistory()
     } catch (e) {
-      setToastError(e instanceof Error ? e.message : "Analysis failed")
-      setActiveView("interview")
+      setToastError(e instanceof Error ? e.message : "Analysis failed. Your recording is available to retry.")
+      setActiveView("review")
     }
+  }
+  const openHistory = async (id: string) => {
+    try {
+      const saved = await getInterview(id)
+      setTranscript(saved.payload.answers.map((a) => a.text).join(" "))
+      setPlan({ questions: saved.payload.questions, rubric: saved.payload.rubric })
+      if (saved.result) { setResults(saved.result); setActiveView("results") }
+      else { setPending(saved.payload); setActiveView("review") }
+    } catch (e) { setToastError(e instanceof Error ? e.message : "Could not load the interview.") }
+  }
+  const removeHistory = async (id: string) => {
+    try {
+      await deleteInterview(id)
+      if (pending?.interview_id === id) {
+        setPending(null)
+        try { sessionStorage.removeItem("interviewpilot.pending.v1") } catch { /* no-op */ }
+      }
+      await refreshHistory()
+    } catch (e) { setToastError(e instanceof Error ? e.message : "Could not delete the interview.") }
   }
 
   return (
-    <main className="min-h-screen bg-background relative">
-      {toastError ? (
-        <div
-          className="fixed top-4 left-1/2 z-[100] flex max-w-lg -translate-x-1/2 items-center gap-3 rounded-lg border border-destructive/40 bg-destructive/15 px-4 py-3 text-sm text-foreground shadow-lg backdrop-blur-sm"
-          role="alert"
-        >
-          <span className="flex-1">{toastError}</span>
-          <button
-            type="button"
-            onClick={() => setToastError(null)}
-            className="shrink-0 text-primary hover:underline"
-          >
-            Dismiss
+    <main className="min-h-screen bg-background">
+      {toastError && <div role="alert" className="m-4 rounded-xl border border-destructive bg-card p-4 flex gap-4">
+        <span className="flex-1">{toastError}</span>
+        <button onClick={() => setToastError(null)} className="text-primary">Dismiss</button>
+      </div>}
+      {!ready ? (
+        <form className="mx-auto max-w-md p-8 space-y-4" onSubmit={(event) => { event.preventDefault(); void initialize(accessCode) }}>
+          <h1 className="text-2xl font-bold">InterviewPilot</h1>
+          <p>{accessRequired ? "Enter the demo access code to start." : "Connecting to your interview workspace."}</p>
+          {accessRequired && <input type="password" aria-label="Demo access code" value={accessCode}
+            onChange={(event) => setAccessCode(event.target.value)} className="w-full rounded border p-3 bg-card" />}
+          <button disabled={connecting} className="rounded bg-primary px-5 py-3 text-primary-foreground">
+            {connecting ? "Connecting…" : accessRequired ? "Continue" : "Retry connection"}
           </button>
-        </div>
-      ) : null}
-
-      {activeView === "setup" && (
-        <SetupScreen
-          onStart={handleSetupStart}
-          isStarting={isStarting}
-          onClientError={(message) => setToastError(message)}
-        />
-      )}
-      {activeView === "interview" && plan && (
-        <InterviewScreen
-          plan={plan}
-          onEnd={handleInterviewEnd}
-          onError={(msg) => setToastError(msg)}
-        />
-      )}
-      {activeView === "processing" && <ProcessingScreen />}
-      {activeView === "results" && results && (
-        <ResultsScreen
-          results={results}
-          transcript={transcript}
-          onRetry={() => {
-            setResults(null)
-            setActiveView("interview")
-          }}
-        />
+        </form>
+      ) : (
+        <>
+          {activeView !== "interview" && activeView !== "processing" && <nav className="p-4">
+            <button onClick={() => { setActiveView("setup"); void refreshHistory().catch(() => {}) }} className="text-primary">
+              Setup & history
+            </button>
+          </nav>}
+          {activeView === "setup" && <>
+            <SetupScreen onStart={handleSetupStart} isStarting={isStarting} onClientError={setToastError} />
+            <InterviewHistory interviews={history} onOpen={(id) => void openHistory(id)} onDelete={(id) => void removeHistory(id)} />
+          </>}
+          {activeView === "interview" && plan && <InterviewScreen plan={plan} onEnd={analyze} onError={setToastError} />}
+          {activeView === "processing" && <ProcessingScreen />}
+          {activeView === "review" && pending && <section className="mx-auto max-w-3xl p-6 space-y-5">
+            <h1 className="text-2xl font-semibold">Your recording is ready</h1>
+            <p className="text-muted-foreground">Review the captured answers, then retry analysis. You do not need to repeat the interview.</p>
+            {pending.answers.map((answer, index) => <div key={index} className="rounded-xl border p-4">
+              <h2 className="font-medium">{pending.questions[index]}</h2>
+              <p className="mt-2 text-muted-foreground">{answer.text || (answer.asked ? "No answer captured." : "Question not reached.")}</p>
+            </div>)}
+            <button onClick={() => void analyze(pending)} className="rounded-xl bg-primary px-6 py-3 text-primary-foreground">Analyze recording</button>
+          </section>}
+          {activeView === "results" && results && <ResultsScreen results={results} transcript={transcript}
+            onRetry={() => { setResults(null); setActiveView("setup") }} />}
+        </>
       )}
     </main>
   )

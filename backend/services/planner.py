@@ -1,4 +1,4 @@
-from backend.gemini import generate_structured
+from backend.gemini import GeminiInvocationError, generate_structured
 from backend.schemas import PlanOutput, SetupInput
 
 _PLANNER_SYSTEM = (
@@ -23,8 +23,12 @@ Include a concise scoring rubric with strict criteria:
 - Average (50-70): Partially relevant but vague, generic, or lacking depth.
 - Weak (0-50): Vague, off-topic, rambling, or answers that merely mention keywords without substance. Superficial alignment with the question should not exceed 50.
 """
-        return await generate_structured(
+        result = await generate_structured(
             system_instruction=_PLANNER_SYSTEM,
             user_prompt=user_prompt,
             output_model=PlanOutput,
         )
+
+        if len(result.questions) != num_q:
+            raise GeminiInvocationError("The planner returned the wrong question count. Please retry.")
+        return result

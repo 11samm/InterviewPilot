@@ -14,7 +14,7 @@ from pydantic import BaseModel, ValidationError
 _BACKEND_DIR = Path(__file__).resolve().parent
 load_dotenv(_BACKEND_DIR / ".env")
 
-MODEL_ID = "gemini-2.5-flash-lite"
+MODEL_ID = os.getenv("GEMINI_MODEL", "gemini-2.5-flash-lite")
 
 _client: Client | None = None
 
@@ -31,7 +31,7 @@ class GeminiInvocationError(Exception):
 
 def _require_api_key() -> str:
     key = (os.environ.get("GEMINI_API_KEY") or "").strip()
-    if not key or key == "your_api_key_here":
+    if not key or key.startswith("your_"):
         raise GeminiInvocationError(
             "GEMINI_API_KEY is missing or still set to the placeholder. "
             "Set a valid key in backend/.env."
@@ -43,7 +43,7 @@ def get_client() -> Client:
     global _client
     key = _require_api_key()
     if _client is None:
-        _client = Client(api_key=key)
+        _client = Client(api_key=key, http_options=types.HttpOptions(api_version="v1beta", timeout=90000))
     return _client
 
 
@@ -77,7 +77,7 @@ async def generate_structured(
         )
     except Exception as e:
         raise GeminiInvocationError(
-            f"Gemini request failed: {type(e).__name__}: {e}"
+            "The AI service is unavailable. Please retry shortly."
         ) from e
 
     text = (response.text or "").strip()
@@ -88,12 +88,12 @@ async def generate_structured(
         payload = json.loads(text)
     except json.JSONDecodeError as e:
         raise GeminiInvocationError(
-            f"Model output was not valid JSON: {e}"
+            "The AI service returned invalid JSON. Please retry."
         ) from e
 
     try:
         return output_model.model_validate(payload)
     except ValidationError as e:
         raise GeminiInvocationError(
-            f"Model JSON did not match the expected schema: {e}"
+            "The AI response did not match the expected format. Please retry."
         ) from e
