@@ -1,0 +1,138 @@
+[
+  {
+    "id": "s01",
+    "question": "Tell me about a time you had to debug a difficult production issue.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail (metrics, tools, timeline), and clarity of structure (situation, action, result).",
+    "answer": "So there was this one time, uh, something broke in prod and I basically just looked around the code for a while until I found it. It was a pretty annoying bug but I fixed it eventually and everyone was happy.",
+    "human_score": 10,
+    "notes": "Vague, no concrete tools/metrics, weak structure. Expect low score."
+  },
+  {
+    "id": "s02",
+    "question": "Tell me about a time you had to debug a difficult production issue.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail (metrics, tools, timeline), and clarity of structure (situation, action, result).",
+    "answer": "Our checkout API's p99 latency jumped from 200ms to 4s after a Friday deploy. I pulled up our Datadog traces, noticed the spike correlated with a new feature flag, and bisected the deploy by rolling back the flag first, which confirmed it was the cause. I found the flag enabled an unindexed query on the orders table. I added a composite index, verified the query plan with EXPLAIN, and redeployed. Latency dropped back to 180ms within ten minutes, and I wrote a postmortem so we added a migration checklist requiring EXPLAIN review before merging schema-affecting flags.",
+    "human_score": 100,
+    "notes": "Specific metrics, tools, clear situation/action/result. Expect high score."
+  },
+  {
+    "id": "s03",
+    "question": "Describe a situation where you disagreed with a teammate's technical decision.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "A teammate wanted to rewrite our REST API as GraphQL two weeks before a launch. I was worried about the timeline risk, so I asked if we could scope a smaller pilot on one endpoint instead of the whole API. We agreed to prototype GraphQL on the search endpoint only, measured the migration effort (about 3 days for one endpoint), and used that data to decide the full rewrite would happen after launch instead. The launch shipped on time and we did the GraphQL migration properly the following quarter.",
+    "human_score": 85,
+    "notes": "Good structure, some specificity, moderately strong."
+  },
+  {
+    "id": "s04",
+    "question": "Describe a situation where you disagreed with a teammate's technical decision.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "Honestly I try to avoid conflict at work, so if someone disagrees with me I usually just go along with what they want to keep things smooth on the team.",
+    "human_score": 5,
+    "notes": "Doesn't actually answer the question or show a resolved disagreement. Expect low score."
+  },
+  {
+    "id": "s05",
+    "question": "How do you prioritize tasks when everything feels urgent?",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "Last sprint I had three P1 tickets land the same morning: a customer-facing outage, a broken CI pipeline blocking releases, and a data export bug affecting one client. I fixed the outage first since it affected all users, then unblocked CI since it was blocking six other engineers, and scheduled the single-client export bug for later that day since it had a workaround. I logged the reasoning in our incident channel so the team could see the tradeoff, and all three were resolved within the day.",
+    "human_score": 85,
+    "notes": "Concrete, quantified, clear reasoning. Expect high score."
+  },
+  {
+    "id": "s06",
+    "question": "How do you prioritize tasks when everything feels urgent?",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I usually just make a to-do list and try to do the important stuff first, kind of like most people do I guess.",
+    "human_score": 20,
+    "notes": "Generic, no example, no evidence. Expect low score."
+  },
+  {
+    "id": "s07",
+    "question": "Tell me about a project you're proud of.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I led the migration of our monolith's authentication module to a standalone service. The old system stored sessions in a shared in-memory cache that couldn't scale past two instances. I designed a stateless JWT-based flow, migrated 40k active users with zero downtime using a dual-write period, and load tested it to confirm it handled 10x our peak traffic. After launch, our API layer could finally scale horizontally, which unblocked the infra team's autoscaling work.",
+    "human_score": 100,
+    "notes": "Very specific, quantified, clear result and downstream impact. Expect high score."
+  },
+  {
+    "id": "s08",
+    "question": "Tell me about a project you're proud of.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I worked on a bunch of stuff at my last job, mostly frontend things, some bug fixes, and a couple of small features. It was fine.",
+    "human_score": 5,
+    "notes": "No single project, no specificity, no result. Expect very low score."
+  },
+  {
+    "id": "s09",
+    "question": "How do you handle receiving critical feedback on your code?",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "In a recent PR review, a senior engineer pointed out my caching layer had a race condition under concurrent writes. I initially disagreed, so I wrote a small reproduction script to test it, and it turned out they were right: two writers could both read stale data before either wrote. I added a mutex around the read-modify-write and added a regression test. I now write reproduction scripts before pushing back on review feedback.",
+    "human_score": 80,
+    "notes": "Specific, honest about being wrong, clear resolution. Expect fairly high score."
+  },
+  {
+    "id": "s10",
+    "question": "How do you handle receiving critical feedback on your code?",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I don't really get much critical feedback because my code is usually pretty solid, but if I did I guess I'd just fix whatever they said.",
+    "human_score": 10,
+    "notes": "Deflective, no real example, borderline evasive. Expect low score."
+  },
+  {
+    "id": "s11",
+    "question": "Describe a time you had to learn a new technology quickly.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "We needed to add real-time collaboration to our editor and I'd never used CRDTs before. I spent a weekend reading the Yjs docs and a couple of papers on operational transforms versus CRDTs, then built a small prototype syncing two browser tabs over WebSocket to validate the approach before committing the team to it. That prototype became the basis of the feature we shipped six weeks later, and I wrote an internal doc so the rest of the team could ramp up faster than I did.",
+    "human_score": 100,
+    "notes": "Specific technology, timeline, concrete deliverable and team impact. Expect high score."
+  },
+  {
+    "id": "s12",
+    "question": "Describe a time you had to learn a new technology quickly.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I'm a fast learner in general so whenever something new comes up I just figure it out pretty quickly, I don't really remember a specific time though.",
+    "human_score": 5,
+    "notes": "No concrete example despite the question explicitly asking for one. Expect low score."
+  },
+  {
+    "id": "s13",
+    "question": "Tell me about a time you had to debug a difficult production issue.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail (metrics, tools, timeline), and clarity of structure (situation, action, result).",
+    "answer": "We had an issue where users were getting logged out randomly, which was pretty frustrating for people. I checked the logs and noticed it happened more on mobile, so I figured it was probably something with how we handled sessions on shorter-lived connections. I ended up adjusting the session refresh logic and after that the complaints stopped.",
+    "human_score": 65,
+    "notes": "Real situation and a plausible fix, but no tools named, no timeline, no measured before/after. Middle ground: has structure, missing hard specifics."
+  },
+  {
+    "id": "s14",
+    "question": "Describe a situation where you disagreed with a teammate's technical decision.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "A coworker wanted to add a new caching library to our stack and I thought it was overkill for our traffic. We went back and forth in a meeting, and eventually he brought some benchmark numbers that convinced me it would actually help with a specific slow endpoint we had. We added it just for that one endpoint instead of everywhere, and it did seem to help load times.",
+    "human_score": 55,
+    "notes": "Clear situation/action/result and honest about being convinced, but 'did seem to help' is vague and no numbers given. Solid but not fully evidenced."
+  },
+  {
+    "id": "s15",
+    "question": "How do you prioritize tasks when everything feels urgent?",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "When things pile up I try to think about what will hurt the most people if it doesn't get done, so customer-facing bugs usually jump ahead of internal tooling issues. There was a week where I had a client bug and a refactor due at the same time, and I pushed the refactor back a couple days to handle the client issue first, which worked out fine.",
+    "human_score": 60,
+    "notes": "Has a real example and reasonable framework, but light on specifics (no metrics, vague 'worked out fine' result). Mid-tier."
+  },
+  {
+    "id": "s16",
+    "question": "Tell me about a project you're proud of.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "I built an internal dashboard for our support team so they could see customer account status without pinging engineering every time. It took me about two weeks and pulled data from a couple of our internal services. People on the support team seemed to like it and used it pretty regularly.",
+    "human_score": 40,
+    "notes": "Single concrete project with a timeline, but no measured adoption/impact numbers ('seemed to like it' is soft). Decent but not top-tier evidence."
+  },
+  {
+    "id": "s17",
+    "question": "Describe a time you had to learn a new technology quickly.",
+    "rubric": "Grade 0-100 on relevance to the question, specificity of concrete detail, and clarity of structure (situation, action, result).",
+    "answer": "When I joined my current team they were using Kubernetes, which I hadn't touched before. I went through some tutorials and read our internal runbooks over the first couple weeks, and started by just shadowing deploys before doing one myself. Within a month I was comfortable enough to be on-call for it.",
+    "human_score": 45,
+    "notes": "Believable, has a rough timeline and a real technology, but no specific project/deliverable came out of the learning, just general ramp-up. Mid-tier."
+  }
+]

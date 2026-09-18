@@ -31,6 +31,57 @@ def test_authentication_required(client):
     with TestClient(app) as outsider:
         assert outsider.get("/api/interviews").status_code == 401
         assert outsider.post("/api/live-token").status_code == 401
+        assert outsider.post(
+            "/api/resume",
+            files={"file": ("resume.txt", b"x" * 100, "text/plain")},
+        ).status_code == 401
+
+
+def test_resume_upload_and_rate_limit(client):
+    body = (
+        "Senior engineer at Aurora Labs. Led checkout latency work across payments "
+        "and reduced p99 for the storefront checkout path."
+    ).encode()
+    response = client.post(
+        "/api/resume",
+        files={"file": ("my-resume.txt", body, "text/plain")},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert "Aurora Labs" in payload["text"]
+    assert payload["filename"] == "my-resume.txt"
+    assert payload["char_count"] == len(payload["text"])
+    for _ in range(9):
+        assert client.post(
+            "/api/resume",
+            files={"file": ("my-resume.txt", body, "text/plain")},
+        ).status_code == 200
+    assert client.post(
+        "/api/resume",
+        files={"file": ("my-resume.txt", body, "text/plain")},
+    ).status_code == 429
+
+
+def test_plan_rejects_short_resume(client):
+    response = client.post(
+        "/api/plan",
+        json={
+            "role": "Software Engineer",
+            "style": "behavioral",
+            "vibe": "startup",
+            "difficulty": "medium",
+            "num_questions": 2,
+            "resume_text": "x" * 40,
+        },
+    )
+    assert response.status_code == 422
+    assert "too short" in response.json()["detail"]
+
+
+def test_analyze_rejects_resume_based_extra_field(client):
+    data = draft()
+    data["resume_based"] = True
+    assert client.post("/api/analyze", json=data).status_code == 422
 
 
 def test_save_history_retry_and_session_isolation(client):

@@ -1,0 +1,185 @@
+{
+  "sample_count": 17,
+  "labeled_count": 17,
+  "parse_failure_rate": 0.0,
+  "mean_absolute_error": 12.353,
+  "pearson_correlation": 0.964,
+  "within_10pt_rate": 0.588,
+  "average_consistency_stdev": null,
+  "average_latency_seconds": 1.563,
+  "per_sample": [
+    {
+      "id": "s01",
+      "human_score": 10,
+      "ai_score": 20.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 2.082,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s02",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 2.082,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s03",
+      "human_score": 85,
+      "ai_score": 95.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.636,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s04",
+      "human_score": 5,
+      "ai_score": 20.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.371,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s05",
+      "human_score": 85,
+      "ai_score": 95.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.804,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s06",
+      "human_score": 20,
+      "ai_score": 30.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.209,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s07",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.419,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s08",
+      "human_score": 5,
+      "ai_score": 15.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.184,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s09",
+      "human_score": 80,
+      "ai_score": 95.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.286,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s10",
+      "human_score": 10,
+      "ai_score": 20.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.335,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s11",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.753,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s12",
+      "human_score": 5,
+      "ai_score": 20.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.255,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s13",
+      "human_score": 65,
+      "ai_score": 65.0,
+      "abs_error": 0.0,
+      "error": null,
+      "latency_seconds": 1.813,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s14",
+      "human_score": 55,
+      "ai_score": 75.0,
+      "abs_error": 20.0,
+      "error": null,
+      "latency_seconds": 1.66,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s15",
+      "human_score": 60,
+      "ai_score": 75.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.508,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s16",
+      "human_score": 40,
+      "ai_score": 65.0,
+      "abs_error": 25.0,
+      "error": null,
+      "latency_seconds": 1.438,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s17",
+      "human_score": 45,
+      "ai_score": 75.0,
+      "abs_error": 30.0,
+      "error": null,
+      "latency_seconds": 1.735,
+      "repeats": null,
+      "consistency_stdev": null
+    }
+  ],
+  "tag": "baseline",
+  "model": "gemini-2.5-flash-lite",
+  "run_at": "2026-09-18T09:46:23.491122+00:00"
+}

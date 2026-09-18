@@ -15,6 +15,7 @@ import {
 } from "@/app/lib/api"
 import { speechMetrics } from "@/app/lib/speechMetrics"
 import { InterviewHistory } from "@/app/components/InterviewHistory"
+import { ResumeUpload } from "@/app/components/ResumeUpload"
 import { useFaceTracker } from "@/app/hooks/useFaceTracker"
 import { useLiveAPI } from "@/app/hooks/useLiveAPI"
 import {
@@ -301,6 +302,9 @@ function SetupScreen({
   const [vibe, setVibe] = useState("startup")
   const [difficulty, setDifficulty] = useState("medium")
   const [numQuestions, setNumQuestions] = useState(2)
+  const [resumeText, setResumeText] = useState("")
+  const [resumeFilename, setResumeFilename] = useState<string | null>(null)
+  const [isParsingResume, setIsParsingResume] = useState(false)
 
   const styleOptions: SelectOption[] = [
     { value: "behavioral", label: "Behavioral" },
@@ -322,7 +326,19 @@ function SetupScreen({
       onClientError("Please enter or select a role.")
       return
     }
-    void onStart({ role: trimmedRole, style, vibe, difficulty, num_questions: numQuestions })
+    const trimmedResume = resumeText.trim()
+    if (trimmedResume && trimmedResume.length < 80) {
+      onClientError("Resume text is too short. Paste more of the resume or upload the file.")
+      return
+    }
+    void onStart({
+      role: trimmedRole,
+      style,
+      vibe,
+      difficulty,
+      num_questions: numQuestions,
+      resume_text: trimmedResume || undefined,
+    })
   }
 
   return (
@@ -384,13 +400,28 @@ function SetupScreen({
               How many interview questions to ask.
             </p>
           </div>
+          <ResumeUpload
+            resumeText={resumeText}
+            filename={resumeFilename}
+            isParsing={isParsingResume}
+            onParsingChange={setIsParsingResume}
+            onParsed={(text, name) => {
+              setResumeText(text)
+              setResumeFilename(name)
+            }}
+            onClear={() => {
+              setResumeText("")
+              setResumeFilename(null)
+            }}
+            onError={onClientError}
+          />
         </div>
 
         {/* Start Button */}
         <button
           type="button"
           onClick={handleStart}
-          disabled={isStarting}
+          disabled={isStarting || isParsingResume}
           className="w-full py-4 bg-primary text-primary-foreground font-semibold rounded-xl hover:shadow-[0_0_30px_rgba(147,51,234,0.4)] hover:scale-[1.02] transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-primary/50 disabled:opacity-60 disabled:pointer-events-none disabled:hover:scale-100"
         >
           {isStarting ? "Starting…" : "Start Interview"}
@@ -420,7 +451,7 @@ function InterviewScreen({ plan, onEnd, onError }: {
     startSession, stopSession, finishSession, isConnected, isConnecting, isGeminiSpeaking,
     userTranscript, userSpeakingSeconds, currentQuestionIndex, getRecording,
   } = useLiveAPI({
-    questions: plan.questions, rubric: plan.rubric,
+    questions: plan.questions, rubric: plan.rubric, resumeBased: Boolean(plan.resume_based),
     onInterviewComplete: () => { void submitHandoff() },
     onError: handleLiveError,
   })
@@ -435,7 +466,11 @@ function InterviewScreen({ plan, onEnd, onError }: {
     stopTracking()
     const snapshot = getRecording()
     await onEnd({
-      interview_id: interviewId.current, ...plan, ...snapshot, face_metrics: getFaceMetrics(),
+      interview_id: interviewId.current,
+      questions: plan.questions,
+      rubric: plan.rubric,
+      ...snapshot,
+      face_metrics: getFaceMetrics(),
     })
   }, [getRecording, getFaceMetrics, onEnd, plan, finishSession, stopTracking])
 
@@ -457,7 +492,14 @@ function InterviewScreen({ plan, onEnd, onError }: {
   return (
     <section className="min-h-screen p-6 space-y-6">
       <header className="flex justify-between items-center">
-        <span className="font-semibold">InterviewPilot</span>
+        <span className="font-semibold flex items-center gap-2">
+          InterviewPilot
+          {plan.resume_based ? (
+            <span className="text-xs font-normal text-muted-foreground border border-border rounded-md px-2 py-0.5">
+              Resume-based
+            </span>
+          ) : null}
+        </span>
         <span className="text-sm text-muted-foreground">
           {isConnecting ? "Connecting…" : isConnected ? isGeminiSpeaking ? "Interviewer speaking" : "Listening" : "Session stopped"}
           {" · "}{Math.floor(elapsedSeconds / 60)}:{String(elapsedSeconds % 60).padStart(2, "0")}
@@ -793,7 +835,7 @@ export default function InterviewPilot() {
     try {
       const saved = await getInterview(id)
       setTranscript(saved.payload.answers.map((a) => a.text).join(" "))
-      setPlan({ questions: saved.payload.questions, rubric: saved.payload.rubric })
+      setPlan({ questions: saved.payload.questions, rubric: saved.payload.rubric, resume_based: false })
       if (saved.result) { setResults(saved.result); setActiveView("results") }
       else { setPending(saved.payload); setActiveView("review") }
     } catch (e) { setToastError(e instanceof Error ? e.message : "Could not load the interview.") }

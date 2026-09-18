@@ -1,6 +1,6 @@
 # InterviewPilot Architecture
 
-Status: current as of 2026-09-17, branch `main`. This document describes the implementation as it exists in code, not aspirational design. See the [README](README.md#-known-limitations--roadmap) for known gaps.
+Status: current as of 2026-09-18, branch `main`. This document describes the implementation as it exists in code, not aspirational design. See the [README](README.md#-known-limitations--roadmap) for known gaps.
 
 ## 1. System overview
 
@@ -34,7 +34,7 @@ The permanent `GEMINI_API_KEY` lives only in `backend/.env` and is used server-s
 
 A single client component (`InterviewPilot`) owns a state machine: `setup → interview → processing → results`, plus a `review` state for a pending (unanalyzed) interview recovered from `sessionStorage` or history.
 
-- **Setup** — `SetupScreen` collects `{ role, style, vibe, difficulty, num_questions }` and calls `POST /api/plan`.
+- **Setup** — `SetupScreen` collects `{ role, style, vibe, difficulty, num_questions }` plus optional resume text (PDF/`.txt` upload via `POST /api/resume` or paste) and calls `POST /api/plan`.
 - **Interview** — `InterviewScreen` owns the live session (`useLiveAPI`) and camera tracking (`useFaceTracker`) and renders the live HUD.
 - **Processing** — a spinner while `POST /api/analyze` runs.
 - **Results** — `ResultsScreen` renders per-question grades/evidence/feedback, speech/camera metrics, strengths/improvements, and on-demand deep-dive drills (`POST /api/deepdive`).
@@ -73,7 +73,7 @@ Client-side mirror of `backend/services/speech.py`'s filler/word/pace logic, use
 - CORS `allow_origins` is built from `CORS_ORIGINS` (comma-separated); a literal `*` is rejected at startup.
 - A middleware rejects `POST`/`PUT`/`DELETE` requests whose `Origin` header is present but not in the configured allow-list, and marks every `/api/*` response `Cache-Control: no-store`.
 - `GeminiInvocationError` is caught and translated to a generic `502` message — raw upstream exception text (which can contain URLs/internals) is never returned to the client, only logged server-side by exception type.
-- Routers: `auth` (no dependency — issues the session itself), `plan`/`deepdive` (require an existing session), `analyze`/`history`/`live` (each independently calls `require_session`, since some need the raw `Request` for other reasons).
+- Routers: `auth` (no dependency — issues the session itself), `plan`/`deepdive` (require an existing session), `analyze`/`history`/`live`/`resume` (each independently calls `require_session`, since some need the raw `Request` for other reasons).
 
 ### Auth & sessions (`auth.py`, `storage.py`)
 
@@ -84,7 +84,11 @@ Client-side mirror of `backend/services/speech.py`'s filler/word/pace logic, use
 
 ### Planning (`routers/plan.py`, `services/planner.py`)
 
-`POST /api/plan` takes `SetupInput` (`role`, `style`, `vibe`, `difficulty`, `num_questions`) and asks Gemini for structured `PlanOutput` (`questions[]`, `rubric`). The planner verifies the returned question count matches the request.
+`POST /api/plan` takes `SetupInput` (`role`, `style`, `vibe`, `difficulty`, `num_questions`, optional `resume_text`) and asks Gemini for a structured `PlannerDraft` (`questions[]`, `rubric`, `question_grounds[]`). The planner verifies the returned question count matches the request. When `resume_text` is present (≥80 normalized chars), every question must include a grounding evidence quote that is a real substring of the resume; invented quotes raise a retryable `502`. When resume text is absent, `question_grounds` must be empty. The HTTP response is `PlanOutput` with `resume_based` set in Python (grounds are discarded so resume snippets never reach the browser, Live, or SQLite). Whitespace-only or 1–79 character resume text is rejected with `422` rather than silently falling back to generic questions.
+
+### Resume parse (`routers/resume.py`, `services/resume.py`)
+
+`POST /api/resume` (multipart file upload, rate-limited to 10/min/owner) deterministically extracts text from a PDF or `.txt` (≤2 MB, ≤8 PDF pages, ≤30k chars). Classification uses filename suffix + magic bytes. No LLM, no disk write, no SQLite — the extracted text is returned to the browser for an in-memory `SetupInput.resume_text` only. Scanned/image-only PDFs fail with a paste-friendly error (no OCR).
 
 ### Live tokens (`routers/live.py`)
 
@@ -144,11 +148,8 @@ rate_limits(key TEXT PRIMARY KEY, window INTEGER, count INTEGER)
 
 Treat the Live WebSocket integration and real-key grading calls as **implemented but unverified** until someone runs them with actual credentials and hardware, per the README's [Known limitations](README.md#-known-limitations--roadmap).
 
-## 6. Deliberately out of scope (see roadmap docs)
+## 6. Deliberately out of scope
 
-- Resume upload / job-description personalization.
-- AI evaluation harness / labeled grading-accuracy datasets.
+- Job-description matching (resume grilling is resume-only; resume bytes are never stored; Live still does not receive the resume text).
 - Full user accounts, PostgreSQL, cross-device login.
 - Hosted deployment / Dockerfile (no target environment configured).
-
-See [`InterviewPilot_Upgrade_Action_Plan.md`](InterviewPilot_Upgrade_Action_Plan.md) and [`InterviewPilot_Resume_Upgrade_Roadmap.md`](InterviewPilot_Resume_Upgrade_Roadmap.md) for the longer-term thinking behind these (both are banners-flagged as partially superseded by the current state).

@@ -111,6 +111,20 @@ it("keeps disconnected recordings and reports a recoverable error", async () => 
   hook.unmount()
 })
 
+it("includes resume grilling guidance in the live system instruction when resumeBased", async () => {
+  const hook = renderHook(() => useLiveAPI({
+    questions: ["Tell me about Aurora Labs."], rubric: "Be specific", resumeBased: true,
+    onInterviewComplete: vi.fn(), onError: vi.fn(),
+  }))
+  await act(() => hook.result.current.startSession())
+  act(() => { FakeSocket.latest.onopen?.() })
+  const setup = JSON.parse(FakeSocket.latest.send.mock.calls[0][0]).setup
+  const text = setup.systemInstruction.parts[0].text as string
+  expect(text).toContain("written from the candidate's resume")
+  expect(text).toContain("Do not add follow-ups")
+  hook.unmount()
+})
+
 it("stops a microphone permission request that resolves after cancellation", async () => {
   let resolveMic!: (value: unknown) => void
   const deferred = new Promise((resolve) => { resolveMic = resolve })

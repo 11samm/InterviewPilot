@@ -7,8 +7,17 @@ __v0_jsx-dev-runtime.ts
 .vercel/
 next.user-config.*
 
-# Environment variables
+# Environment / secrets — keep *.env.example tracked
+.env
+.env.*
+!.env.example
+!**/.env.example
+backend/.env
+.env.local
 .env*.local
+*.pem
+credentials.json
+**/secrets/
 
 # Python backend
 backend/.venv/
@@ -19,15 +28,14 @@ node_modules
 .DS_Store
 
 # Python-specific additions
-backend/.env
 backend/__pycache__/
 backend/*.pyc
-.env.local
 # Runtime data and generated artifacts
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
 backend/data/
+*.sqlite3
 .pytest_cache/
 coverage/
-.cursor/*.log
+.cursor/

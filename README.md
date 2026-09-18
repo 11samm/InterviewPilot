@@ -1,8 +1,8 @@
 # 🎙️ InterviewPilot
 
-**AI-powered mock interview coach with real-time voice conversation, webcam eye-contact tracking, and personalised coaching feedback.**
+**AI-powered mock interview coach with real-time voice conversation, webcam eye-contact tracking, optional resume grilling, and personalised coaching feedback.**
 
-InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI interviewer. While you speak, the app tracks your eye contact via webcam, counts your filler words, and measures your speaking pace — then grades every answered question against a rubric and generates targeted coaching the moment the session ends. Interviews and reports are saved server-side so you can reopen them later.
+InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI interviewer. Optionally upload or paste your resume so the planner generates questions about your real projects and claims. While you speak, the app tracks your eye contact via webcam, counts your filler words, and measures your speaking pace — then grades every answered question against a rubric and generates targeted coaching the moment the session ends. Interviews and reports are saved server-side so you can reopen them later. Resume text itself is never persisted.
 
 > For a deeper architecture walkthrough (data flow, endpoint contracts, security model), see [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -18,6 +18,7 @@ InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI inte
 - 💾 **Persisted history** — completed and in-progress interviews are saved per browser session (SQLite) and can be reopened, retried, or deleted
 - 🔁 **Resilient recording** — if analysis fails, the recorded transcript is preserved and can be retried without repeating the interview; a pending payload also survives a page refresh
 - 🎛️ **Fully configurable** — role, company vibe, interview style (Behavioral / Technical / Case Study / System Design), difficulty, and question count
+- 📄 **Optional resume grilling** — upload a PDF/`.txt` or paste your resume so questions probe named projects, companies, and claims from your actual experience (resume text is never persisted)
 
 ---
 
@@ -27,7 +28,7 @@ InterviewPilot puts you in a live voice-to-voice interview with a Gemini AI inte
 Setup → Live Interview → Processing → Results & Deep Dives
 ```
 
-1. **Setup** — choose your role, company vibe, interview style, difficulty, and number of questions
+1. **Setup** — choose your role, company vibe, interview style, difficulty, and number of questions; optionally upload or paste a resume so questions are grounded in your experience
 2. **Interview** — click "Start Live Session" to begin voice conversation with the AI interviewer; your webcam runs eye-contact tracking in parallel (optional — a camera failure falls back to voice-only)
 3. **Processing** — the backend grades your captured answers against the rubric using Gemini
 4. **Results** — view your content score, speech/camera estimates, per-question feedback, and coaching improvements; expand any weakness for a personalised drill
@@ -49,7 +50,8 @@ Browser (Next.js 16 / React 19)
 FastAPI (Python)
 │
 ├── POST /api/session, GET /api/session      → access-code gated browser session (HttpOnly cookie)
-├── POST /api/plan                            → PlannerService → Gemini (structured JSON)
+├── POST /api/resume                          → deterministic PDF/.txt text extraction (not persisted)
+├── POST /api/plan                            → PlannerService → Gemini (structured JSON; optional resume grounding)
 ├── POST /api/live-token                      → ephemeral, single-use Gemini Live token
 ├── POST /api/analyze                         → PresenceService (math) + SpeechService (math) + CoachService (LLM)
 ├── POST /api/deepdive                        → DeepDiveService → Gemini (structured JSON)
@@ -57,7 +59,7 @@ FastAPI (Python)
 └── SQLite (backend/data/interviews.sqlite3)   → sessions, drafts, completed reports
 ```
 
-The **live voice conversation** goes directly browser → Gemini Live WebSocket, authenticated with a short-lived token the backend mints on demand. The backend is otherwise called for session/auth, planning, analysis, deep-dive drills, and history. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full request/response contracts and the security model (cookies, rate limits, CORS, origin checks).
+The **live voice conversation** goes directly browser → Gemini Live WebSocket, authenticated with a short-lived token the backend mints on demand. The backend is otherwise called for session/auth, optional resume text extraction, question planning (with optional resume grounding), analysis, deep-dive drills, and history. See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full request/response contracts and the security model (cookies, rate limits, CORS, origin checks).
 
 ---
 
@@ -82,6 +84,7 @@ The **live voice conversation** goes directly browser → Gemini Live WebSocket,
 | **Uvicorn** | ASGI server |
 | **google-genai** | Official Gemini SDK (structured JSON output + Live ephemeral tokens) |
 | **Pydantic** | Strict schema validation (extra fields forbidden, bounded sizes) |
+| **pypdf** | Deterministic PDF text extraction for optional resume upload |
 | **SQLite** | Single-instance persistence for sessions/drafts/reports |
 | **pytest** | Backend test suite |
 | **Python 3.11+** | Runtime |
@@ -187,7 +190,8 @@ InterviewPilot/
 │   ├── layout.tsx                 # Root layout, fonts, analytics
 │   ├── globals.css                # Tailwind v4 + dark-mode CSS variables
 │   ├── components/
-│   │   └── InterviewHistory.tsx   # History list (open/delete)
+│   │   ├── InterviewHistory.tsx   # History list (open/delete)
+│   │   └── ResumeUpload.tsx       # Optional PDF/.txt upload + paste
 │   ├── hooks/
 │   │   ├── useLiveAPI.ts          # Gemini Live WebSocket session manager
 │   │   └── useFaceTracker.ts      # MediaPipe eye-contact tracking
@@ -199,15 +203,23 @@ InterviewPilot/
 │
 ├── tests/                         # Vitest unit tests
 │
-└── backend/
-    ├── main.py                    # FastAPI app entry point, CORS/origin/error handling
-    ├── auth.py                    # Session cookie issuance/validation, access-code check
-    ├── storage.py                 # SQLite sessions/drafts/reports + rate limiting
-    ├── gemini.py                  # Shared Gemini client + generate_structured() helper
-    ├── schemas.py                 # Pydantic request/response models (strict validation)
-    ├── routers/                   # session, plan, analyze, deepdive, history, live
-    ├── services/                  # planner, coach, presence, speech, deepdive
-    └── tests/                     # pytest suite
+├── backend/
+│   ├── main.py                    # FastAPI app entry point, CORS/origin/error handling
+│   ├── auth.py                    # Session cookie issuance/validation, access-code check
+│   ├── storage.py                 # SQLite sessions/drafts/reports + rate limiting
+│   ├── gemini.py                  # Shared Gemini client + generate_structured() helper
+│   ├── schemas.py                 # Pydantic request/response models (strict validation)
+│   ├── routers/                   # session, plan, resume, analyze, deepdive, history, live
+│   ├── services/                  # planner, coach, presence, speech, deepdive, resume, textnorm
+│   └── tests/                     # pytest suite
+│
+└── evals/                         # AI grading-accuracy eval harness (see evals/README.md), not part of the app
+    ├── dataset.json               # labeled question/answer samples with human_score ratings
+    ├── rate.py                    # interactive CLI to add your ratings
+    ├── run_eval.py                # runs the dataset through the real CoachService, saves metrics
+    ├── metrics.py                 # MAE, correlation, consistency, parse-failure-rate
+    ├── compare.py                 # diff two saved runs (prompt/model A vs B)
+    └── results/                   # one JSON file per run_eval.py run
 ```
 
 ---
@@ -218,7 +230,8 @@ InterviewPilot/
 |---|---|---|---|
 | `GET` | `/api/session` | — | Whether the browser has an authenticated session and whether an access code is required |
 | `POST` | `/api/session` | — | Create/reuse a browser session cookie (checks `DEMO_ACCESS_CODE` if configured) |
-| `POST` | `/api/plan` | session | Generate interview questions and scoring rubric |
+| `POST` | `/api/resume` | session | Extract text from an uploaded PDF or `.txt` resume (not stored; returns text for planning only) |
+| `POST` | `/api/plan` | session | Generate interview questions and scoring rubric (optionally grounded in resume text) |
 | `POST` | `/api/live-token` | session | Mint a single-use, model-constrained Gemini Live ephemeral token |
 | `POST` | `/api/analyze` | session | Grade the completed interview (transcript + face metrics); idempotent for a completed interview ID |
 | `POST` | `/api/deepdive` | session | Generate a targeted practice drill for a specific weakness |
@@ -234,13 +247,23 @@ Full request/response schemas are in [`ARCHITECTURE.md`](ARCHITECTURE.md) and th
 
 ## 🧩 How It Works
 
+### Resume grilling (optional)
+
+On Setup you can upload a PDF or `.txt` resume, or paste text:
+
+1. File uploads go to `POST /api/resume`, which extracts text deterministically with `pypdf` (no LLM, no disk write). Scanned/image-only PDFs will fail — paste the text instead.
+2. That text is kept in browser memory and sent once with `POST /api/plan` as `resume_text`.
+3. The planner asks Gemini for questions grounded in named resume facts. Every question must include an evidence quote that actually appears in the resume; invented quotes are rejected server-side. The HTTP response is only `{ questions, rubric, resume_based }` — grounding quotes and the raw resume never reach Live, history, or SQLite.
+4. Without a resume, planning falls back to the generic role/style/vibe/difficulty path. Too-short pasted text (under ~80 characters) is rejected rather than silently ignored.
+5. The live interviewer still asks the planned questions verbatim with no follow-ups; “grilling” means harder, resume-specific planned questions. A small **Resume-based** chip appears on the live HUD when the plan used a resume.
+
 ### Live interview session
 
 When the user clicks **Start Live Session**:
 
 1. The browser requests a single-use, 30-minute, model-constrained ephemeral token from `POST /api/live-token` (backend-authenticated with the real `GEMINI_API_KEY`, which never leaves the server).
 2. A WebSocket opens directly from the browser to the Gemini Live API using that ephemeral token.
-3. A script-based system prompt is sent — the model must call `set_question(index)` before reading each question (rejecting skipped/backward indices), then calls `end_interview()` after the closing line.
+3. A script-based system prompt is sent — the model must call `set_question(index)` before reading each question (rejecting skipped/backward indices), then calls `end_interview()` after the closing line. Resume-based plans add a short instruction to ask those questions verbatim without inventing extra resume facts.
 4. Mic audio is captured → resampled to 16kHz → encoded as base64 PCM → streamed to Gemini; silence and time spent listening to the interviewer are excluded from "speaking seconds."
 5. Model audio arrives as base64 PCM chunks → decoded → queued for gapless playback via the Web Audio API.
 6. Server-side transcription (`inputTranscription`) is appended to whichever question is currently marked active, so each answer is attributed to its own question.
@@ -269,7 +292,8 @@ After the session, `POST /api/analyze`:
 - In production, an access code (`DEMO_ACCESS_CODE`, ≥16 chars) is required to open a new session, and `GEMINI_API_KEY` must be a real key at boot or the app refuses to start.
 - History rows are isolated per session owner; one browser session cannot read or delete another's interviews.
 - CORS origins are explicit (`CORS_ORIGINS`); browser-originated `POST`/`PUT`/`DELETE` requests with an unexpected `Origin` header are rejected.
-- Per-owner/IP rate limits apply to login attempts, live-token minting, and analysis requests.
+- Per-owner/IP rate limits apply to login attempts, live-token minting, resume uploads, and analysis requests.
+- Uploaded resumes are parsed in memory only; the extracted text is returned to the browser for planning and is never written to SQLite or history.
 
 This is a **single-instance SQLite, browser-session model** — not full user accounts. There is no cross-device login, password reset, or account recovery; clearing cookies loses access to that session's history.
 
@@ -277,21 +301,21 @@ This is a **single-instance SQLite, browser-session model** — not full user ac
 
 ## 🗺️ Known limitations / roadmap
 
-This section reflects the current, verified state (2026-09-17). See [`InterviewPilot_Upgrade_Action_Plan.md`](InterviewPilot_Upgrade_Action_Plan.md) and [`InterviewPilot_Resume_Upgrade_Roadmap.md`](InterviewPilot_Resume_Upgrade_Roadmap.md) for longer-term ideas — both carry a banner clarifying which parts are already done.
+This section reflects the current product state (2026-09-18).
 
 - **No concurrent in-progress analyze lock** — two overlapping `POST /api/analyze` calls for the same *incomplete* interview can both invoke the LLM before either result is saved (a completed result is idempotent and cannot be overwritten).
 - **No history retention/cleanup** — old interview rows are not automatically pruned.
 - **No recovery for a refresh during an active live recording** — a completed report or a pending (unanalyzed) payload survives a refresh; an in-progress live session does not.
 - **Single-instance SQLite** — suitable for a demo/small deployment, not multi-instance/PostgreSQL-scale production. No hosted demo/deployment is currently configured.
-- **Grading is not independently calibrated** — deterministic aggregation and evidence-checking prevent obviously invented output, but they do not establish that scores are consistent/fair across runs; there is no eval harness yet.
-- **Live Gemini flow is implemented but not verified end-to-end against a real API key/microphone in this pass** (see [`ARCHITECTURE.md`](ARCHITECTURE.md) for exactly what was and wasn't exercised).
-- Out of scope for the current pass: resume/job-description personalization, AI training/eval datasets, real user accounts/PostgreSQL.
+- **Grading calibration is ongoing** — deterministic aggregation and evidence-checking prevent obviously invented output; agreement with human judgment is measured by the [`/evals`](evals/README.md) harness. Across 4 iterations, mean absolute error dropped from 12.35 → 7.06 (Pearson correlation ~0.94–0.97) by tightening the coach's scoring anchors after each run. See [`evals/EVAL_REPORT.md`](evals/EVAL_REPORT.md) (including an open item: the last two rounds ran on a different model than production due to a quota outage) and [`evals/README.md`](evals/README.md) for how to extend the dataset.
+- **Resume grilling is resume-only** — no job-description matching; resume files/text are not persisted (only the resulting questions/rubric are); scanned/image-only PDFs need paste; the live interviewer does not receive the raw resume and still does not ask free-form follow-ups.
+- **Not built:** full user accounts, PostgreSQL, cross-device login.
 
 ---
 
 ## 📖 Detailed documentation
 
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full data-flow diagram, per-file breakdown, and verification status, and [`HANDOFF.md`](HANDOFF.md) for the implementation history of this cleanup pass.
+See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the full data-flow diagram, per-file breakdown, and verification notes, and [`evals/README.md`](evals/README.md) for the AI grading-accuracy evaluation harness.
 
 ---
 

@@ -1,7 +1,10 @@
 export interface SetupInput {
-  role: string; style: string; vibe: string; difficulty: string; num_questions?: number
+  role: string; style: string; vibe: string; difficulty: string
+  num_questions?: number
+  resume_text?: string
 }
-export interface PlanOutput { questions: string[]; rubric: string }
+export interface PlanOutput { questions: string[]; rubric: string; resume_based?: boolean }
+export interface ResumeParseOutput { text: string; filename: string; char_count: number }
 export interface FaceMetric { timestamp: number; eye_contact: number; head_pitch: number; head_yaw: number }
 export interface AnswerInput { question_index: number; asked: boolean; text: string; speaking_seconds: number }
 export interface AnalyzeInput {
@@ -29,6 +32,16 @@ export interface InterviewSummary {
 }
 export interface SavedInterview { id: string; created_at: number; payload: AnalyzeInput; result: AnalyzeOutput | null }
 
+async function readError(response: Response): Promise<string> {
+  let message = `Request failed (${response.status}). Please retry.`
+  try {
+    const error = await response.json()
+    if (typeof error.detail === "string") message = error.detail
+    else if (Array.isArray(error.detail)) message = "Some interview data is invalid. Please check the recording and retry."
+  } catch { /* Non-JSON proxy error: preserve a useful status without exposing an HTML page. */ }
+  return message
+}
+
 export async function request<T>(path: string, method = "GET", body?: unknown): Promise<T> {
   const response = await fetch("/api" + path, {
     method, credentials: "same-origin",
@@ -36,17 +49,23 @@ export async function request<T>(path: string, method = "GET", body?: unknown): 
     body: body === undefined ? undefined : JSON.stringify(body),
     signal: AbortSignal.timeout(120_000),
   })
-  if (!response.ok) {
-    let message = `Request failed (${response.status}). Please retry.`
-    try {
-      const error = await response.json()
-      if (typeof error.detail === "string") message = error.detail
-      else if (Array.isArray(error.detail)) message = "Some interview data is invalid. Please check the recording and retry."
-    } catch { /* Non-JSON proxy error: preserve a useful status without exposing an HTML page. */ }
-    throw new Error(message)
-  }
+  if (!response.ok) throw new Error(await readError(response))
   return response.status === 204 ? undefined as T : response.json()
 }
+
+export async function uploadResume(file: File): Promise<ResumeParseOutput> {
+  const body = new FormData()
+  body.append("file", file)
+  const response = await fetch("/api/resume", {
+    method: "POST",
+    credentials: "same-origin",
+    body,
+    signal: AbortSignal.timeout(120_000),
+  })
+  if (!response.ok) throw new Error(await readError(response))
+  return response.json()
+}
+
 export const sessionStatus = () => request<{ authenticated: boolean; access_code_required: boolean }>("/session")
 export const openSession = (access_code = "") => request("/session", "POST", { access_code })
 export const planInterview = (input: SetupInput) => request<PlanOutput>("/plan", "POST", input)

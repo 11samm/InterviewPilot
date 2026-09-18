@@ -17,6 +17,7 @@ class SetupInput(StrictModel):
     vibe: Annotated[str, Field(min_length=1, max_length=100)]
     difficulty: Annotated[str, Field(min_length=1, max_length=100)]
     num_questions: int = Field(default=2, ge=1, le=10)
+    resume_text: str = Field(default="", max_length=30000)
 
 
 class FaceMetric(StrictModel):
@@ -26,9 +27,27 @@ class FaceMetric(StrictModel):
     head_yaw: float = Field(ge=-180, le=180)
 
 
+class QuestionGround(StrictModel):
+    question_index: int = Field(ge=0, le=9)
+    evidence: str = Field(min_length=1, max_length=500)
+
+
+class PlannerDraft(StrictModel):
+    questions: Annotated[list[ShortText], Field(min_length=1, max_length=10)]
+    rubric: Annotated[str, Field(min_length=1, max_length=10000)]
+    question_grounds: Annotated[list[QuestionGround], Field(max_length=10)]
+
+
 class PlanOutput(StrictModel):
     questions: Annotated[list[ShortText], Field(min_length=1, max_length=10)]
     rubric: Annotated[str, Field(min_length=1, max_length=10000)]
+    resume_based: bool = False
+
+
+class ResumeParseOutput(StrictModel):
+    text: str = Field(min_length=1, max_length=30000)
+    filename: Annotated[str, Field(min_length=1, max_length=200)]
+    char_count: int = Field(ge=1, le=30000)
 
 
 class AnswerInput(StrictModel):

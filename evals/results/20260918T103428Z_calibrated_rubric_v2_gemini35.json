@@ -1,0 +1,185 @@
+{
+  "sample_count": 17,
+  "labeled_count": 17,
+  "parse_failure_rate": 0.0,
+  "mean_absolute_error": 10.0,
+  "pearson_correlation": 0.937,
+  "within_10pt_rate": 0.824,
+  "average_consistency_stdev": null,
+  "average_latency_seconds": 17.021,
+  "per_sample": [
+    {
+      "id": "s01",
+      "human_score": 10,
+      "ai_score": 0.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.894,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s02",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 68.204,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s03",
+      "human_score": 85,
+      "ai_score": 90.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.517,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s04",
+      "human_score": 5,
+      "ai_score": 0.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.449,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s05",
+      "human_score": 85,
+      "ai_score": 95.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.653,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s06",
+      "human_score": 20,
+      "ai_score": 15.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.188,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s07",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.033,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s08",
+      "human_score": 5,
+      "ai_score": 10.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.305,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s09",
+      "human_score": 80,
+      "ai_score": 90.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 199.819,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s10",
+      "human_score": 10,
+      "ai_score": 0.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.47,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s11",
+      "human_score": 100,
+      "ai_score": 95.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.381,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s12",
+      "human_score": 5,
+      "ai_score": 0.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.434,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s13",
+      "human_score": 65,
+      "ai_score": 50.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.408,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s14",
+      "human_score": 55,
+      "ai_score": 60.0,
+      "abs_error": 5.0,
+      "error": null,
+      "latency_seconds": 1.324,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s15",
+      "human_score": 60,
+      "ai_score": 50.0,
+      "abs_error": 10.0,
+      "error": null,
+      "latency_seconds": 1.34,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s16",
+      "human_score": 40,
+      "ai_score": 55.0,
+      "abs_error": 15.0,
+      "error": null,
+      "latency_seconds": 1.587,
+      "repeats": null,
+      "consistency_stdev": null
+    },
+    {
+      "id": "s17",
+      "human_score": 45,
+      "ai_score": 90.0,
+      "abs_error": 45.0,
+      "error": null,
+      "latency_seconds": 1.352,
+      "repeats": null,
+      "consistency_stdev": null
+    }
+  ],
+  "tag": "calibrated_rubric_v2_gemini35",
+  "model": "gemini-3.5-flash-lite",
+  "run_at": "2026-09-18T10:34:28.277717+00:00"
+}

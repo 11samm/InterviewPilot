@@ -12,7 +12,7 @@ load_dotenv(Path(__file__).parent / ".env")
 
 from backend.auth import router as auth_router, require_session
 from backend.gemini import GeminiInvocationError
-from backend.routers import analyze, deepdive, history, live, plan
+from backend.routers import analyze, deepdive, history, live, plan, resume
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,7 @@ async def unexpected_error(request: Request, exc: Exception):
 app.include_router(auth_router, prefix="/api")
 for router in (plan.router, deepdive.router):
     app.include_router(router, prefix="/api", dependencies=[Depends(require_session)])
-for router in (analyze.router, history.router, live.router):
+for router in (analyze.router, history.router, live.router, resume.router):
     app.include_router(router, prefix="/api")
 
 
