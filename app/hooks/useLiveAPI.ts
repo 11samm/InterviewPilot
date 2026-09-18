@@ -100,6 +100,34 @@ export function useLiveAPI(options: Options) {
       ? Math.max(0, ((endedAt.current || performance.now()) - connectedAt.current) / 1000) : 0,
   }), [])
 
+  // Shared drain-then-teardown: give final transcription and queued interviewer audio
+  // a short grace period to arrive before tearing down, then stop. Used by both the
+  // automatic end_interview tool call and manual Finish, so neither drops in-flight
+  // transcripts by closing the socket immediately.
+  const drainAndStop = useCallback(() => {
+    return new Promise<void>((resolve) => {
+      if (finishTimer.current) { clearTimeout(finishTimer.current); finishTimer.current = null }
+      if (!socket.current || socket.current.readyState !== WebSocket.OPEN) {
+        stopSession()
+        resolve()
+        return
+      }
+      const id = generation.current
+      const stale = () => id !== generation.current
+      const drain = () => {
+        if (stale()) { resolve(); return }
+        const remaining = Math.max(0, playback.current.current - (output.current?.currentTime ?? 0))
+        if (remaining > 0) {
+          finishTimer.current = setTimeout(drain, remaining * 1000 + 100)
+          return
+        }
+        stopSession()
+        resolve()
+      }
+      finishTimer.current = setTimeout(drain, 1500)
+    })
+  }, [stopSession])
+
   const startSession = useCallback(async () => {
     stopSession()
     const id = generation.current
@@ -165,16 +193,6 @@ export function useLiveAPI(options: Options) {
         opts.current.onError(hasRecording
           ? "The connection closed. Your recording is preserved; save it for analysis."
           : "The interviewer disconnected. Please retry.")
-      }
-      const completeWhenDrained = () => {
-        if (stale()) return
-        const remaining = Math.max(0, playback.current.current - (output.current?.currentTime ?? 0))
-        if (remaining > 0) {
-          finishTimer.current = setTimeout(completeWhenDrained, remaining * 1000 + 100)
-          return
-        }
-        stopSession()
-        opts.current.onInterviewComplete()
       }
       ws.onmessage = (event) => {
         if (stale()) return
@@ -246,8 +264,7 @@ export function useLiveAPI(options: Options) {
               responses.push({ id: call.id, name: call.name, response: { result: "ok" } })
               if (!pendingCompletion.current) {
                 pendingCompletion.current = true
-                // Give final transcription and queued audio time to arrive before the snapshot.
-                finishTimer.current = setTimeout(completeWhenDrained, 1500)
+                void drainAndStop().then(() => opts.current.onInterviewComplete())
               }
             }
           }
@@ -264,10 +281,10 @@ export function useLiveAPI(options: Options) {
         ? "Microphone permission was denied. Allow microphone access and try again."
         : error instanceof Error ? error.message : "Could not start the interview.")
     }
-  }, [stopSession, stopPlayback])
+  }, [stopSession, stopPlayback, drainAndStop])
 
   return {
-    startSession, stopSession, isConnected, isConnecting, isGeminiSpeaking,
+    startSession, stopSession, finishSession: drainAndStop, isConnected, isConnecting, isGeminiSpeaking,
     userTranscript, userSpeakingSeconds, currentQuestionIndex, getRecording,
   }
 }

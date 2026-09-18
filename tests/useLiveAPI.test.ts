@@ -68,9 +68,38 @@ it("automatic completion preserves the transcript before invoking the callback",
   const hook = await connectedHook()
   vi.useFakeTimers()
   act(() => FakeSocket.latest.emit({ toolCall: { functionCalls: [{ id: "end", name: "end_interview" }] } }))
-  act(() => vi.advanceTimersByTime(2000))
+  // The drain-then-complete helper resolves a promise before invoking the callback,
+  // so advance timers asynchronously to let that microtask flush.
+  await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
   expect(hook.complete).toHaveBeenCalledTimes(1)
   expect(hook.result.current.getRecording().answers[0].text).toBe("I built a tested service.")
+  hook.unmount()
+})
+
+it("manual finish drains for late transcripts instead of closing the socket immediately", async () => {
+  const hook = await connectedHook()
+  vi.useFakeTimers()
+  let finished!: Promise<void>
+  act(() => { finished = hook.result.current.finishSession() })
+  // The grace period keeps the websocket open so a late transcript chunk is not dropped.
+  expect(FakeSocket.latest.close).not.toHaveBeenCalled()
+  act(() => {
+    FakeSocket.latest.emit({ serverContent: { inputTranscription: { text: " Extra detail." } } })
+  })
+  expect(hook.result.current.isConnected).toBe(true)
+  act(() => vi.advanceTimersByTime(1600))
+  await act(async () => { await finished })
+  expect(FakeSocket.latest.close).toHaveBeenCalled()
+  expect(hook.result.current.getRecording().answers[0].text).toBe("I built a tested service. Extra detail.")
+  hook.unmount()
+})
+
+it("manual finish on an already-disconnected session resolves without waiting", async () => {
+  const hook = await connectedHook()
+  act(() => FakeSocket.latest.onclose?.())
+  expect(hook.result.current.isConnected).toBe(false)
+  await act(async () => { await hook.result.current.finishSession() })
+  expect(hook.result.current.getRecording().answers[0].text).toContain("tested service")
   hook.unmount()
 })
 

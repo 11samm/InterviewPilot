@@ -135,17 +135,23 @@ export function useFaceTracker(): UseFaceTrackerReturn {
     if (stale()) { stream.getTracks().forEach((track) => track.stop()); return }
     streamRef.current = stream
     video.srcObject = stream
+    // Stop this call's own stream directly on every stale exit below; do not rely on a
+    // concurrent stopTracking() call having already cleaned it up.
+    const abortStream = () => {
+      stream.getTracks().forEach((track) => track.stop())
+      if (streamRef.current === stream) streamRef.current = null
+    }
     await video.play()
 
-    if (stale()) return
+    if (stale()) { abortStream(); return }
     const vision = await FilesetResolver.forVisionTasks(WASM_BASE)
-    if (stale()) return
+    if (stale()) { abortStream(); return }
     const faceLandmarker = await FaceLandmarker.createFromOptions(vision, {
       baseOptions: { modelAssetPath: FACE_LANDMARKER_MODEL },
       runningMode: "VIDEO",
       numFaces: 1,
     })
-    if (stale()) { faceLandmarker.close(); return }
+    if (stale()) { faceLandmarker.close(); abortStream(); return }
     faceLandmarkerRef.current = faceLandmarker
 
     const runDetection = () => {

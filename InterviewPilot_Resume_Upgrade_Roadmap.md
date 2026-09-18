@@ -1,5 +1,7 @@
 # InterviewPilot Resume Upgrade Roadmap
 
+> **Status banner (2026-09-17): this document predates a large rewrite.** Real speech metrics, full per-question grading, persistence/history, auth, hardened CORS/config, ephemeral Live tokens, and a test suite/CI have since been implemented on `main`. Read this file as historical planning context only — it does **not** describe the current app. See [`README.md`](README.md#-known-limitations--roadmap) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for the current, verified state and for what is still genuinely future work (AI eval harness, resume/job-description personalization, PostgreSQL/real accounts, hosted deployment).
+
 ## Goal
 
 Turn InterviewPilot from a strong hackathon-style AI application into a

@@ -1,5 +1,7 @@
 # InterviewPilot Roadmap: Actionable Breakdown
 
+> **Status banner (2026-09-17): several items below are already done.** A large rewrite has since landed on `main` — real (non-stubbed) `SpeechService`, per-question grading with evidence checks, SQLite persistence/history, session auth, CORS/origin hardening, ephemeral Gemini Live tokens, a test suite, and CI all exist in the current code. Treat the checklist below as a historical planning snapshot, **not** a current-state description. See [`README.md`](README.md#-known-limitations--roadmap) and [`ARCHITECTURE.md`](ARCHITECTURE.md) for what is actually true today, including what remains genuinely unbuilt (AI eval harness, resume/JD personalization, PostgreSQL/accounts, hosted deployment).
+
 The roadmap’s point is not “add more AI features.” It is to make the existing mock-interview product **honest, measurable, and defensible in a job interview**. Right now the app already has a live Gemini voice interviewer, in-browser eye-contact tracking, and a coaching report. Several pieces behind that UI are still fake, incomplete, or local-only.
 
 Source roadmap: [InterviewPilot_Resume_Upgrade_Roadmap.md](InterviewPilot_Resume_Upgrade_Roadmap.md)

@@ -10,7 +10,6 @@ import {
   type InterviewSummary,
   sessionStatus, openSession, listInterviews, getInterview, deleteInterview, saveDraft,
   type DeepDiveOutput,
-  type FaceMetric,
   type PlanOutput,
   type SetupInput,
 } from "@/app/lib/api"
@@ -24,9 +23,6 @@ import {
   Building2,
   Gauge,
   ChevronDown,
-  Mic,
-  Eye,
-  Activity,
   Check,
   AlertTriangle,
   RotateCcw,
@@ -414,28 +410,34 @@ function InterviewScreen({ plan, onEnd, onError }: {
   const [elapsedSeconds, setElapsedSeconds] = useState(0)
   const interviewId = useRef(crypto.randomUUID())
   const ending = useRef(false)
+  const { videoRef, eyeContactScore, getFaceMetrics, startTracking, stopTracking } = useFaceTracker()
+  // A failed/ended live session should never leave the camera running behind it.
+  const handleLiveError = useCallback((message: string) => {
+    stopTracking()
+    onError(message)
+  }, [onError, stopTracking])
   const {
-    startSession, stopSession, isConnected, isConnecting, isGeminiSpeaking,
+    startSession, stopSession, finishSession, isConnected, isConnecting, isGeminiSpeaking,
     userTranscript, userSpeakingSeconds, currentQuestionIndex, getRecording,
   } = useLiveAPI({
     questions: plan.questions, rubric: plan.rubric,
     onInterviewComplete: () => { void submitHandoff() },
-    onError,
+    onError: handleLiveError,
   })
-  const { videoRef, eyeContactScore, getFaceMetrics, startTracking, stopTracking } = useFaceTracker()
   const metrics = speechMetrics(userTranscript, userSpeakingSeconds)
 
   const submitHandoff = useCallback(async () => {
     if (ending.current) return
     ending.current = true
     setIsSubmitting(true)
-    stopSession()
+    // Manual finish drains briefly for late transcripts, same as automatic completion.
+    await finishSession()
     stopTracking()
     const snapshot = getRecording()
     await onEnd({
       interview_id: interviewId.current, ...plan, ...snapshot, face_metrics: getFaceMetrics(),
     })
-  }, [getRecording, getFaceMetrics, onEnd, plan, stopSession, stopTracking])
+  }, [getRecording, getFaceMetrics, onEnd, plan, finishSession, stopTracking])
 
   useEffect(() => {
     if (!isConnected) return
@@ -716,30 +718,40 @@ export default function InterviewPilot() {
   const [connecting, setConnecting] = useState(false)
 
   const refreshHistory = useCallback(async () => { setHistory(await listInterviews()) }, [])
-  const initialize = useCallback(async (code?: string) => {
-    setConnecting(true)
-    setToastError(null)
-    try {
-      const status = await sessionStatus()
-      if (!status.authenticated) {
-        if (status.access_code_required && code === undefined) { setAccessRequired(true); return }
-        await openSession(code)
-      }
-      setReady(true)
-      setAccessRequired(false)
-      await refreshHistory()
+  // Single-flight guard: React Strict Mode (and any other overlapping caller) can fire
+  // initialize() twice in the same tick. Share one in-flight request instead of minting
+  // two unauthenticated POST /session calls that would orphan the first session's history.
+  const initInFlight = useRef<Promise<void> | null>(null)
+  const initialize = useCallback((code?: string): Promise<void> => {
+    if (initInFlight.current) return initInFlight.current
+    const run = async () => {
+      setConnecting(true)
+      setToastError(null)
       try {
-        const value = sessionStorage.getItem("interviewpilot.pending.v1")
-        if (value) {
-          const draft = JSON.parse(value)
-          if (draft.interview_id && Array.isArray(draft.answers) && Array.isArray(draft.questions)) {
-            setPending(draft)
-            setActiveView("review")
-          }
+        const status = await sessionStatus()
+        if (!status.authenticated) {
+          if (status.access_code_required && code === undefined) { setAccessRequired(true); return }
+          await openSession(code)
         }
-      } catch { /* Server history remains available when browser storage is disabled. */ }
-    } catch (e) { setToastError(e instanceof Error ? e.message : "Could not connect to the backend.") }
-    finally { setConnecting(false) }
+        setReady(true)
+        setAccessRequired(false)
+        await refreshHistory()
+        try {
+          const value = sessionStorage.getItem("interviewpilot.pending.v1")
+          if (value) {
+            const draft = JSON.parse(value)
+            if (draft.interview_id && Array.isArray(draft.answers) && Array.isArray(draft.questions)) {
+              setPending(draft)
+              setActiveView("review")
+            }
+          }
+        } catch { /* Server history remains available when browser storage is disabled. */ }
+      } catch (e) { setToastError(e instanceof Error ? e.message : "Could not connect to the backend.") }
+      finally { setConnecting(false) }
+    }
+    const promise = run().finally(() => { initInFlight.current = null })
+    initInFlight.current = promise
+    return promise
   }, [refreshHistory])
   useEffect(() => { void initialize() }, [initialize])
 
@@ -766,11 +778,16 @@ export default function InterviewPilot() {
       setActiveView("results")
       setPending(null)
       try { sessionStorage.removeItem("interviewpilot.pending.v1") } catch { /* no-op */ }
-      await refreshHistory()
     } catch (e) {
       setToastError(e instanceof Error ? e.message : "Analysis failed. Your recording is available to retry.")
       setActiveView("review")
+      return
     }
+    // History refresh is best-effort: a successful analysis must stay on the results
+    // screen even if the history list fails to refresh afterward.
+    refreshHistory().catch(() => {
+      setToastError("Your report is ready, but the history list could not refresh. Reopen Setup & history to retry.")
+    })
   }
   const openHistory = async (id: string) => {
     try {
