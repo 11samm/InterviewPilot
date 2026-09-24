@@ -179,6 +179,15 @@ npm run build                                        # Next.js production build
 
 All five run in CI on every push/PR (see [`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
 
+Latest local verification (2026-09-23):
+
+- 13 frontend tests passed across 3 Vitest files.
+- 56 backend and evaluation tests passed.
+- TypeScript and the Next.js production build passed.
+- ESLint completed with no errors and 2 existing unused-variable warnings in the duplicated toast hooks.
+
+The automated checks do not exercise a real Gemini account, microphone, or camera. Run the complete interview flow with the deployment's Gemini key and target browser before treating a release as production-verified.
+
 ---
 
 ## 📁 Project Structure
@@ -301,7 +310,7 @@ This is a **single-instance SQLite, browser-session model** — not full user ac
 
 ## 🗺️ Known limitations / roadmap
 
-This section reflects the current product state (2026-09-18).
+This section reflects the current product state (2026-09-23).
 
 - **No concurrent in-progress analyze lock** — two overlapping `POST /api/analyze` calls for the same *incomplete* interview can both invoke the LLM before either result is saved (a completed result is idempotent and cannot be overwritten).
 - **No history retention/cleanup** — old interview rows are not automatically pruned.
